@@ -460,7 +460,7 @@ event init (i = 0) {
         foreach() {
           // Initialize with a fairly accurate profile
           if ((y-WaveProfile(x,z)) > 0.05) {
-            u.x[] = (1-f[])*(log((y-WaveProfile(x,z))/ytau)*Ustar/0.41);
+            u.x[] = 0.0;//(1-f[])*(log((y-WaveProfile(x,z))/ytau)*Ustar/0.41);
           }
           else {
             u.x[] = 0.;
@@ -468,8 +468,8 @@ event init (i = 0) {
           double x_n = 2.0*(x-0.0*L0)/L0;
           double y_n = 2.0*y/L0-1.2;
           double z_n = 2.0*(z-0.0*L0)/L0;
-          u.y[] = (-1.0*gxz(z_n,x_n)*dfy(y_n)*Ubulk_ex*1.5)*(1.0-f[]);
-          u.z[] = (+1.0*fy(y_n)*dgxz(z_n,x_n)*Ubulk_ex*1.5)*(1.0-f[]);
+          u.y[] = 0.0;//(-1.0*gxz(z_n,x_n)*dfy(y_n)*Ubulk_ex*1.5)*(1.0-f[]);
+          u.z[] = 0.0;//(+1.0*fy(y_n)*dgxz(z_n,x_n)*Ubulk_ex*1.5)*(1.0-f[]);
         }
         boundary ((scalar *){u});
       }
