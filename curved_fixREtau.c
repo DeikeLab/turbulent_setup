@@ -9,7 +9,7 @@ This is the wave wind interaction simulation with logarithmic wind profile and a
 #include "reduced.h"  // reduced gravity
 #include "view.h"
 #include "tag.h"
-#include "lambda2.h"
+#include "sandbox/basic_funcs.h"   
 #include "sandbox/profile6.h"   // From Antoon
 #include "sandbox/maxruntime.h"   
 //#include "sandbox/perfs.h"   
@@ -485,48 +485,6 @@ event init (i = 0) {
 }
 
 /**
-## Outputs
-
-   We are interested in the viscous dissipation rate in both water and air. */
-
-int dissipation_rate (double* rates) {
-	
-  double rateWater = 0.0;
-  double rateAir = 0.0;
-  foreach (reduction (+:rateWater) reduction (+:rateAir)) {
-    double dudx = (u.x[1]     - u.x[-1]    )/(2.*Delta);
-    double dudy = (u.x[0,1]   - u.x[0,-1]  )/(2.*Delta);
-    double dudz = (u.x[0,0,1] - u.x[0,0,-1])/(2.*Delta);
-    double dvdx = (u.y[1]     - u.y[-1]    )/(2.*Delta);
-    double dvdy = (u.y[0,1]   - u.y[0,-1]  )/(2.*Delta);
-    double dvdz = (u.y[0,0,1] - u.y[0,0,-1])/(2.*Delta);
-    double dwdx = (u.z[1]     - u.z[-1]    )/(2.*Delta);
-    double dwdy = (u.z[0,1]   - u.z[0,-1]  )/(2.*Delta);
-    double dwdz = (u.z[0,0,1] - u.z[0,0,-1])/(2.*Delta);
-    double SDeformxx = dudx;
-    double SDeformxy = 0.5*(dudy + dvdx);
-    double SDeformxz = 0.5*(dudz + dwdx);
-    double SDeformyx = SDeformxy;
-    double SDeformyy = dvdy;
-    double SDeformyz = 0.5*(dvdz + dwdy);
-    double SDeformzx = SDeformxz;
-    double SDeformzy = SDeformyz;
-    double SDeformzz = dwdz; 
-    double sqterm = 2.*dv()*(sq(SDeformxx) + sq(SDeformxy) + sq(SDeformxz) +
-			     sq(SDeformyx) + sq(SDeformyy) + sq(SDeformyz) +
-			     sq(SDeformzx) + sq(SDeformzy) + sq(SDeformzz));
-    //rateWater += mu1/rho[]*(0.+f[])*sqterm; //water
-    //rateAir   += mu2/rho[]*(1.-f[])*sqterm; //air
-    rateWater += mu1*(0.+f[])*sqterm; // water
-    rateAir   += mu2*(1.-f[])*sqterm; // air
-  }
-  rates[0] = rateWater;
-  rates[1] = rateAir;
-  return 0;
-
-}
-
-/**
    We log some useful information. */
 
 event log_simulation (i += 10) {
@@ -627,42 +585,6 @@ event acceleration (i++) {
 
 }
 
-double my_interpolation(Point point, scalar s, double xp, double yp, double zp) {
-
-  //boundary({s}); // we need to avoid this call since we use my_interpolation 
-  //                  only if point.level > 0 (i.e., only on some processors)
-  //                  The code can get stuck forever here (only some processors enter here)
-  //                  Manual boundary conditions must be imposed on any scalar field you want to 
-  //                  pass to my_interpolate
-  
-  // Note: we do not risk to have nodata since 
-  //       we check point.level > 0 before calling "my_interpolation"
-
-#if dimension == 2
-  double xpo = (xp - x)/Delta - s.d.x/2.0;
-  double ypo = (yp - y)/Delta - s.d.y/2.0;
-    
-  int i = sign(xpo), j = sign(ypo);
-  xpo = fabs(xpo), ypo = fabs(ypo);
-  
-  return ((s[]*(1. - xpo) + s[i]*xpo)*(1. - ypo) +
-          (s[0,j]*(1. - xpo) + s[i,j]*xpo)*ypo);
-#else
-  double xpo = (xp - x)/Delta - s.d.x/2.0;
-  double ypo = (yp - y)/Delta - s.d.y/2.0;
-  double zpo = (zp - z)/Delta - s.d.z/2.0;
-    
-  int i = sign(xpo), j = sign(ypo), k = sign(zpo);
-  xpo = fabs(xpo), ypo = fabs(ypo), zpo = fabs(zpo);
-  
-  return (((s[]*(1. - xpo) + s[i]*xpo)*(1. - ypo) + 
-	   (s[0,j]*(1. - xpo) + s[i,j]*xpo)*ypo)*(1. - zpo) +
-	   ((s[0,0,k]*(1. - xpo) + s[i,0,k]*xpo)*(1. - ypo) + 
-	   (s[0,j,k]*(1. - xpo) + s[i,j,k]*xpo)*ypo)*zpo); 
-#endif
- 
-}
-
 /** 
    Output video and field in uncompressed format 
    (we can compress later using convert <FILE>.ppm to <FILE>.mpg and open with mplayer) */
@@ -676,8 +598,6 @@ event movies (t = RELEASETIME; t <= T0_*end_sim; t += T0_/tout_mov_my) {
   //fprintf(stderr, "I output the movies every t=%.10e\n", T0_/tout_mov); fflush (stderr);
   fprintf(stderr, "I output the movies every t=%.10e\n", T0_/tout_mov_my); fflush (stderr);
   
-  scalar l2[];
-  lambda2 (u, l2);
   scalar omega[];
   vorticity (u, omega);
 
@@ -696,23 +616,6 @@ event movies (t = RELEASETIME; t <= T0_*end_sim; t += T0_/tout_mov_my) {
   draw_string (stg, size = 30); 
   {
     static FILE * fp = POPEN ("3D", "a");
-    save (fp = fp);
-    fflush (fp);
-  }
-
-  clear();
-  view (fov = 40, camera = "iso", ty = -0.25,
-        width = 1000, height = 1000, bg = {1,1,1}, samples = 4);
-  box(false, lc = {1,1,1}, lw = 0.1);
-  draw_vof ("f", color = "u.x");
-  squares ("u.y", linear = true, n = {0,0,1}, alpha = -L0/2.0);
-  squares ("u.x", linear = true, n = {1,0,0}, alpha = -L0/2.0);
-  //cells (n = {1,0,0}, alpha = -L0/2.0);
-  isosurface ("l2", -1);
-  sprintf (stg, "t = %0.3f", 2.0*pi*(t-RELEASETIME)/T0_);
-  draw_string (stg, size = 30); 
-  {
-    static FILE * fp = POPEN ("vortex", "a");
     save (fp = fp);
     fflush (fp);
   }
@@ -811,153 +714,6 @@ event out_pro (t = RELEASETIME; t <= T0_*end_sim; t += T0_/tout_pro_my) {
     }
 
   }
-
-}
-
-void * matrix_new_3d (int nx, int ny, int nz, size_t size) {
-  void ** m = qmalloc(nx, void *);  //Define a pointer that points to every x coordinate.
-  char * a  = qmalloc(nx*ny*nz*size, char);
-  for (int i=0; i<nx; i++) {
-    m[i] = a+i*ny*nz*size;
-  }
-  return m;
-}
-
-void output_3d(char * fname, scalar s, int maxlevel, bool do_linear, bool print_bin) {
-
-  FILE * fpver = fopen (fname,"w");
-  int nn = (1<<maxlevel);
-  double stp = 0.999999*(L0+X0-X0)/(double)nn; // to avoid interpolated point coincides with fine grid boundary
-  double ** field = (double **) matrix_new_3d (nn, nn, nn, sizeof(double));
-  for (int i = 0; i < nn; i++) {
-    double xp = stp*i + X0 + stp/2.;
-    for (int j = 0; j < nn; j++) {
-      double yp = stp*j + Y0 + stp/2.;
-      for (int k = 0; k < nn; k++) {
-        double zp = stp*k + Z0 + stp/2.;
-        if(do_linear) {
-          field[i][j*nn+k] = interpolate(s,xp,yp,zp);
-	}
-        else {
-          Point point = locate (xp,yp,zp);
-          field[i][j*nn+k] = point.level >= 0 ? s[] : nodata;
-	}
-      }
-    }
-  }
-  if (pid() == 0) { // master
-#if _MPI
-    MPI_Reduce (MPI_IN_PLACE, field[0], cube(nn), MPI_DOUBLE, MPI_MIN, 0,
-		MPI_COMM_WORLD);
-#endif
-    if(print_bin) { // print in binary format
-      for (int i = 0; i < nn; i++) {
-        for (int j = 0; j < nn; j++) {
-          for (int k = 0; k < nn; k++) {
-            fwrite ( &field[i][j*nn+k], sizeof(double), 1, fpver );
-          }
-        }
-      }
-    }
-    else { // print in ascii format
-      for (int i = 0; i < nn; i++) {
-        for (int j = 0; j < nn; j++) {
-          for(int k = 0; k < nn; k++) {
-            fprintf(fpver, "%.10e", field[i][j*nn+k]);
-            fputc('\n', fpver);  // not double quotation""
-          }
-        }
-      }
-    }
-    fflush(fpver);
-  }
-#if _MPI
-  else // slave
-    MPI_Reduce (field[0], NULL, cube(nn), MPI_DOUBLE, MPI_MIN, 0,
-		MPI_COMM_WORLD);
-#endif
-  matrix_free (field);
-  fclose (fpver); // we close at the end
-}
-
-void output_2d_span_avg(char * fname, scalar s, int maxlevel, bool do_linear, bool print_bin) {
-
-  int nn = (1<<maxlevel);
-  double stp = 0.999999*(L0+X0-X0)/(double)nn; // to avoid interpolated point coincides with fine grid boundary
-
-  //fprintf(stderr, "I am here 1\n"), fflush (stderr);
-  // first create a 3D field
-  double ** field = (double **) matrix_new_3d (nn, nn, nn, sizeof(double));
-  for (int i = 0; i < nn; i++) {
-    double xp = stp*i + X0 + stp/2.;
-    for (int j = 0; j < nn; j++) {
-      double yp = stp*j + Y0 + stp/2.;
-      for (int k = 0; k < nn; k++) {
-        double zp = stp*k + Z0 + stp/2.;
-        if(do_linear) {
-          field[i][j*nn+k] = interpolate(s,xp,yp,zp);
-	}
-        else {
-          Point point = locate (xp,yp,zp);
-          field[i][j*nn+k] = point.level >= 0 ? s[] : nodata;
-	}
-      }
-    }
-  }
-
-  //fprintf(stderr, "I am here 2\n"), fflush (stderr);
-  FILE * fpver = fopen (fname,"w");
-  if (pid() == 0) { // master
-
-    // reduce it to the first pid()
-#if _MPI
-    MPI_Reduce (MPI_IN_PLACE, field[0], cube(nn), MPI_DOUBLE, MPI_MIN, 0,
-		MPI_COMM_WORLD);
-#endif
-
-    //fprintf(stderr, "I am here 2b\n"), fflush (stderr);
-    // spanwise averaging
-    double ** field_avg_z = (double **) matrix_new (nn, nn, sizeof(double));
-    for (int i = 0; i < nn; i++) {
-      for (int j = 0; j < nn; j++) {
-	field_avg_z[i][j] = 0.0;
-        for (int k = 0; k < nn; k++) {
-          field_avg_z[i][j] += field[i][j*nn+k]/(double)nn;
-        }
-      }
-    }
-    //fprintf(stderr, "I am here 3\n"), fflush (stderr);
-
-    // print
-    if(print_bin) { // print in binary format
-      for (int i = 0; i < nn; i++) {
-        for (int j = 0; j < nn; j++) {
-	  fwrite ( &field_avg_z[i][j], sizeof(double), 1, fpver );
-        }
-      }
-    }
-    else { // print in ascii format
-      for (int i = 0; i < nn; i++) {
-        for (int j = 0; j < nn; j++) {
-          fprintf(fpver, "%8E", field_avg_z[i][j]);
-          fputc('\n', fpver);  // not double quotation""
-        }
-      }
-    }
-    fflush(fpver);
-    matrix_free (field_avg_z);
-    //fprintf(stderr, "I am here 4\n"), fflush (stderr);
-
-  }
-#if _MPI
-  else // slave
-    MPI_Reduce (field[0], NULL, cube(nn), MPI_DOUBLE, MPI_MIN, 0,
-		MPI_COMM_WORLD);
-#endif
-  //fprintf(stderr, "I am here 5\n"), fflush (stderr);
-
-  matrix_free (field);
-  fclose (fpver); // we close at the end
 
 }
 
@@ -1127,11 +883,11 @@ void output_global_obs_1 (char * fname, int istep, scalar c, scalar p_a, double 
         double yc = y + Delta*pp.y + stp_eta;
         double zc = z + Delta*pp.z;
 #if dimension > 2
-	Point point = locate (xc, yc, zc);
+	Point point1 = locate (xc, yc, zc);
 #else
-	Point point = locate (xc, yc);
+	Point point1 = locate (xc, yc);
 #endif
-	if (point.level > 0) {
+	if (point1.level > 0) {
         
 	  POINT_VARIABLES;
 	
@@ -1211,11 +967,11 @@ void output_global_obs_1 (char * fname, int istep, scalar c, scalar p_a, double 
         double yc = y + Delta*pp.y + stp_eta;
         double zc = z + Delta*pp.z;
 #if dimension > 2
-	Point point = locate (xc, yc, zc);
+	Point point1 = locate (xc, yc, zc);
 #else
-	Point point = locate (xc, yc);
+	Point point1 = locate (xc, yc);
 #endif
-	if (point.level > 0) {
+	if (point1.level > 0) {
         
 	  POINT_VARIABLES;
 	
@@ -1365,7 +1121,7 @@ event bulk_energy (t = RELEASETIME; t <= T0_*end_sim; t += T0_/tout_glo_my) {
     gpeAir += rho2*g_*y*(1.0-f[])*dv();
   }
   double rates[2];
-  dissipation_rate(rates);
+  dissipation_rate(mu1,mu2,u,rates);
   double dissWater = rates[0];
   double dissAir   = rates[1];
   
@@ -1588,23 +1344,6 @@ event bulk_energy (t = RELEASETIME; t <= T0_*end_sim; t += T0_/tout_glo_my) {
 
 }
 
-int compare (const void *a, const void *b) {
-  
-  double x = *(double *)a;
-  double y = *(double *)b;
-
-  if(     x < y) { 
-    return -1;
-  }
-  else if(x > y) {
-    return +1;
-  }
-  else {
-    return +0;
-  }
-
-}
-
 /**
    We want to compute some quantities at the interface. */
 
@@ -1624,11 +1363,11 @@ void output_int_qtn (char * fname, int istep, double time, scalar c, scalar p_a,
         double yc = y + Delta*pp.y + stp_eta;
 #if dimension > 2
         double zc = z + Delta*pp.z; // we keep here to avoid warning (otherwise: unused variable)
-	Point point = locate (xc, yc, zc);
+	Point point1 = locate (xc, yc, zc);
 #else
-	Point point = locate (xc, yc);
+	Point point1 = locate (xc, yc);
 #endif
-	if (point.level > 0) {
+	if (point1.level > 0) {
 	  POINT_VARIABLES;
 	  int_pt++;
 	}
@@ -1695,11 +1434,11 @@ void output_int_qtn (char * fname, int istep, double time, scalar c, scalar p_a,
         double yc = y + Delta*pp.y + stp_eta;
         double zc = z + Delta*pp.z;
 #if dimension > 2
-	Point point = locate (xc, yc, zc);
+	Point point1 = locate (xc, yc, zc);
 #else
-	Point point = locate (xc, yc);
+	Point point1 = locate (xc, yc);
 #endif
-	if (point.level > 0) {
+	if (point1.level > 0) {
 	 
 	  POINT_VARIABLES;
 
@@ -1836,116 +1575,6 @@ void output_int_qtn (char * fname, int istep, double time, scalar c, scalar p_a,
 
 }
 
-/**
-We also want to count the drops and bubbles in the flow. */
-
-void countDropsBubble (char * name_1, char * name_2, char * name_3, int istep, scalar c) {
-
-  scalar m1[]; // droplets
-  scalar m2[]; // bubbles
-  foreach() {
-    m1[] = c[] > 0.5; // i.e. set m true if f[] is close to unity (droplets)
-    m2[] = c[] < 0.5; // m true if f[] close to zero (bubbles)
-  }
-  int n1 = tag(m1);
-  int n2 = tag(m2);
-  
-  /**
-  Having counted the bubbles, now we find their size. This example
-  is similar to the jet atomization problem. We are interested in
-  the volumes and positions of each droplet/bubble.*/
-
-  double v1[n1]; // droplet
-  //coord b1[n1];  // droplet
-  double v2[n2]; // bubble
-  //coord b2[n2];  // bubble
-  
-  /**
-  We initialize: */
-  
-  for (int j=0; j<n1; j++)
-      //v1[j] = b1[j].x = b1[j].y = b1[j].z = 0.0;
-      v1[j] = 0.0;
-  for (int j=0; j<n2; j++)
-      //v2[j] = b2[j].x = b2[j].y = b2[j].z = 0.0;
-      v2[j] = 0.0;
-  
-  /**
-  We proceed with calculation. */
-
-  //foreach_leaf() {
-  foreach(serial) {
-
-    // droplets
-    if (m1[] > 0) {
-      int j = m1[] - 1;
-      v1[j] += dv()*c[]; //increment the volume of the droplet
-      /*
-      coord p = {x,y,z};
-      foreach_dimension()
-	b1[j].x += dv()*c[]*p.x; */
-    }
-    // bubbles
-    if (m2[] > 0) {
-      int j = m2[] - 1;
-      v2[j] += dv()*(1.0-c[]);
-      /* coord p = {x,y,z};
-      foreach_dimension()
-	b2[j].x += dv()*(1.0-c[])*p.x; */
-    }
-
-  }
-  
-  /**
-  Reduce for MPI. */ 
-  
-#if _MPI
-  MPI_Allreduce (MPI_IN_PLACE, v1, n1  , MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
-  fprintf(stderr, "I reduced v1-A\n");
-  //MPI_Allreduce (MPI_IN_PLACE, b1, 3*n1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
-  //fprintf(stderr, "I reduced b1\n");
-  MPI_Allreduce (MPI_IN_PLACE, v2, n2  , MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
-  fprintf(stderr, "I reduced v2-B\n");
-  //MPI_Allreduce (MPI_IN_PLACE, b2, 3*n2, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
-  //fprintf(stderr, "I reduced b2\n");
-#endif
-
-  if (pid() == 0) {
-
-    fflush(stderr);
-
-    /**
-    We first output the number of droplets and bubbles. */
-    
-    FILE * ftot = fopen(name_1,"a");
-    fprintf (ftot, "%.10e %.10e %.10e %.10e\n", t, 1.0*istep, 1.0*(n1-1), 1.0*(n2-1)); // we remove the main region
-    fclose(ftot);
-    
-    /**
-    We output separately the volume and position of each droplet and bubble to file. */
-
-    FILE * fdrop = fopen(name_2,"a");
-    for (int j=0; j<n1; j++) {
-      /* fprintf (fdrop, "%d %.10e %.10e %.10e %.10e\n", 
-	                 j, v1[j], b1[j].x/v1[j], b1[j].y/v1[j], b1[j].z/v1[j]); */
-      fprintf (fdrop, "%d %.10e\n", j, v1[j]);
-    }
-    fclose(fdrop);
-    fflush(fdrop);
-
-    FILE * fbubb = fopen(name_3,"a");
-    for (int j=0; j<n2; j++) {
-      /* fprintf (fbubb, "%d %.10e %.10e %.10e %.10e\n", 
-	                j, v2[j], b2[j].x/v2[j], b2[j].y/v2[j], b2[j].z/v2[j]); */
-      fprintf (fbubb, "%d %.10e\n", j, v2[j]);
-    }
-    fclose(fbubb);
-    fflush(fbubb);
-  
-  }
-	     
-}
-
 //event global_obs (t = RELEASETIME; t <= T0_*end_sim; t += T0_/tout_glo_my) {
 event global_obs (t = RELEASETIME; t <= T0_*end_sim; t += T0_/tout_glo_my) {
 //event global_obs (i += 2) {
@@ -2004,13 +1633,13 @@ event global_obs (t = RELEASETIME; t <= T0_*end_sim; t += T0_/tout_glo_my) {
     sprintf (name_1, "./tagging/num_bubbles_droplets_f1.out");
     sprintf (name_2, "./tagging/tagging_f1/droplets_f1_%09d.out", i);
     sprintf (name_3, "./tagging/tagging_f1/bubbles_f1_%09d.out", i);
-    countDropsBubble (name_1, name_2, name_3, i, f);
+    countDropsBubble (name_1, name_2, name_3, t, RELEASETIME, i, f);
     
     fprintf(stderr, "I do f2-tagging every t=%.10e\n", T0_/tout_glo_my);
     sprintf (name_1, "./tagging/num_bubbles_droplets_f2.out");
     sprintf (name_2, "./tagging/tagging_f2/droplets_f2_%09d.out", i);
     sprintf (name_3, "./tagging/tagging_f2/bubbles_f2_%09d.out", i);
-    countDropsBubble (name_1, name_2, name_3, i, f2);
+    countDropsBubble (name_1, name_2, name_3, t, RELEASETIME, i, f2);
   }
   
   /*
