@@ -69,11 +69,16 @@ double interface_average (struct ob_av oa){
 #else
       coord pc = {x + Delta*p->x, y + Delta*p->y, 0.0};
 #endif
-      Point point1 = locate (pc.x, pc.y, pc.z);
+      //Point point1 = locate (pc.x, pc.y, pc.z);
+      /*
       if (point1.level > 0) {
         for (scalar s in oa.list) {
           data[g++] += ar*my_interpolation(point, s, pc.x, pc.y, pc.z);
         }
+      }
+      */
+      for (scalar s in oa.list) {
+        data[g++] += ar*interpolate_linear(point, s, pc.x, pc.y, pc.z);
       }
     }
   }

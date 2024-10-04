@@ -23,10 +23,10 @@ event perfs (i += 1) {
     FILE * fp = fopen(file,"a");
     if (i == 0)
       fprintf (fp,
-               "t dt mgp.i mgp.nrelax mgpf.i mgpf.nrelax mgu.i mgu.nrelax "
+               "t i dt mgp.i mgp.nrelax mgpf.i mgpf.nrelax mgu.i mgu.nrelax "
                "grid->tn perf.t perf.speed npe\n");
-    fprintf (fp, "%.10e %.10e %d %d %d %d %d %d %ld %.10e %.10e %d\n", 
-             t, dt, mgp.i, mgp.nrelax, mgpf.i, mgpf.nrelax, mgu.i, mgu.nrelax,
+    fprintf (fp, "%.10e %09d %.10e %d %d %d %d %d %d %ld %.10e %.10e %d\n", 
+             t, i, dt, mgp.i, mgp.nrelax, mgpf.i, mgpf.nrelax, mgu.i, mgu.nrelax,
              grid->tn, perf.t, perf.speed, npe());
     fclose(fp);
   }

@@ -1,5 +1,6 @@
 /** 
-This is the wave wind interaction simulation with logarithmic wind profile and adaptive grid. This is a turbulent configuration. */
+   This is the wave wind interaction simulation with logarithmic wind profile and adaptive grid. 
+   This is a turbulent configuration. */
 
 #include "grid/octree.h"
 #include "navier-stokes/centered.h"
@@ -9,48 +10,52 @@ This is the wave wind interaction simulation with logarithmic wind profile and a
 #include "reduced.h"  // reduced gravity
 #include "view.h"
 #include "tag.h"
+//#include "redistance.h"
+#include "sandbox/redistance2.h"
 #include "sandbox/basic_funcs.h"   
 #include "sandbox/profile6.h"   // From Antoon
-#include "sandbox/maxruntime.h"   
-//#include "sandbox/perfs.h"   
 #include "sandbox/my_funcs.h"   
+#include "sandbox/maxruntime.h"  
+#include "sandbox/colormap.h"
+//#include "sandbox/perfs.h"   
 
 /** 
-   Input parameters of the simulations. */
+   Input parameters of the simulations. 
+   (we preinitialize them to some values, which will be overwritten by
+    the ones passed on the command line) */
 
-double RE_tau;      // Friction Reynolds number
-double BO;          // Bond number
-int MAXLEVEL;       // max level of the simulation
-int MINLEVEL;       // min level of the simulation
-double c_;          // wave-speed
-double ak;          // initial steepness
-double RELEASETIME; // physical time before which the precursor simulation should be run
-double uemaxRATIO;  // Ratio to control the maximum error on the water velocity
-double alter_MU;    // Factor to alter the water dynamic viscosity.
-double end_sim;     // end of the simulation (physical time unit)
-int do_eta_loc;     // output or not eta_loc
-int do_profile;     // output or not profiles
-int do_fields;      // output or not fields
-int do_tagging;     // output or not tagging
-double tout_eta;    // output frequency of interfacial quantity
-double tout_slc;    // output frequency of slices
-double tout_pro;    // output frequency of 1d profile
-double tout_res;    // output frequency of restart
-double tout_mov;    // output frequency of the movie
-int prt_res;        // printing resolution
-int from_pr;        // from precursor simulation
+double Re_ast = 720;                   // Friction Reynolds number
+double BO = 200;                       // Bond number
+double Re_wave = 2.55e4;               // Wave Reynolds number
+double UstarRATIO = 0.5;               // Friction velocity over wave speed
+double ak = 0.3;                       // initial steepness
+double r_L0lam = 4.0;                  // ratio between the box size and one wavelength
+double rho_r = 1.225/1000.0;           // reference density (air)
+double mu_r  = 2.2471881948940954e-06; // reference dynamic viscosity (air)
+int MAXLEVEL = 10;                     // max level of the simulation
+int MINLEVEL = 6;                      // min level of the simulation
+double RELEASETIME = 1000;             // physical time before which the precursor simulation should be run
+double uemaxRATIO = 0.3;               // Ratio to control the maximum error on the air velocity
+double end_sim = 1000;                 // end of the simulation (physical time unit)
+int do_eta_loc = 1;                    // output or not eta_loc
+int do_profile = 1;                    // output or not profiles
+int do_fields  = 1;                    // output or not fields
+int do_tagging = 1;                    // output or not tagging
+int prt_res = 9;                       // printing resolution
+int from_pr = 1;                       // from precursor simulation
 
 /**
-   We define these values: the wave number, fluid depth, wave period, acceleration, wave RE,
-   friction velocity Ustar. */
+   We define these values: the wave number, fluid depth, wave period, gravity acceleration,
+   the wave speed, the friction velocity, the wavelength, alter_MU. */
 
 double k_  = 1.0; // we change later 
 double h_  = 1.0; // we change later 
 double T0_ = 1.0; // we change later
 double g_  = 1.0; // we change later
-double RE  = 1.0; // we change later
+double c_  = 1.0; // we change later
 double Ustar = 1.0; // we change later
-double Ubulk_ex = 3.18; // we change later
+double lam_ = 1.0; // we change later
+double alter_MU = 1.0; // we change later
 
 /**
    For some statistics. */
@@ -70,15 +75,17 @@ double cirp_th   = 0.20;   // minimum threshold for position
 double eta_m0    = 1.0;    // initial mean eta0
 
 /**
-   Define some output frequencies. */
+   Define some output frequencies (fraction of the wave period, T0) */
 
-double tout_glo_my = 128.0; // output frequency of global observables
-double tout_eta_my = 32.00; // output frequency of interfacial quantity
-double tout_slc_my = 32.00; // output frequency of slices
-double tout_pro_my = 4.00;  // output frequency of 1d profile
-double tout_res_my = 4.00;  // output frequency of restart
-double tout_mov_my = 12.00; // output frequency of the movie
-double tout_rbk_my = 1.00;  // output frequency of the backup restarting files
+double tout_glo_my = 64.0; // output frequency of global observables (don't go beyond otherwise it may not print)
+double tout_tag_my = 64.0; // output frequency of tagging
+double tout_eta_my = 32.0; // output frequency of interfacial quantity
+double tout_fld_my = 32.0; // output frequency of slices
+double tout_pro_my = 32.0; // output frequency of 1d profile
+double tout_mov_my = 4.00; // output frequency of the movie
+double tout_res_my = 4.00; // output frequency of restart
+double tout_cut_my = 2.00; // output frequency of some 2D cuts (keep <<tout_cut_my>> and <<tout_rbk_my>> for future reuse)
+double tout_rbk_my = 2.00; // output frequency of the backup restarting files (keep <<tout_cut_my>> and <<tout_rbk_my>> for future reuse)
 
 /**
    For the restarting step. */
@@ -90,9 +97,9 @@ int counter = 0;
    The error on the components of the velocity field used for adaptive
    refinement. */
 
-double uemax  = 0.01;
-double femax  = 0.0001;
-double uwemax = 0.001;
+double uemax  = 0.01;   // we are going to change later
+double uwemax = 0.001;  // we are going to change later
+double femax  = 0.0001; // we keep this value
 
 /**
    The density and viscosity ratios are those of air and water. 
@@ -101,14 +108,17 @@ double uwemax = 0.001;
 double RHO_RATIO = 1.225/1000.;
 double MU_RATIO  = 18.31e-6/10.0e-4;
 
-/** 
-   We define a water velocity field for the refinement criteria */
-
-vector u_water[]; 
-
 /**
-   We need to store the variable forcing field av[]. */
+   We define some auxiliary fields:
+   --> the shifted VoF and an associated variable;
+   --> the hydrodynamic pressure with the hydrostatic load; 
+   --> the water velocity field;
+   --> the forcing term. */
 
+scalar f2s[];
+double my_stp_eta_f2s = 0.1; // we will change later
+scalar p_hd[];
+vector u_water[]; 
 face vector av[];
 
 /**
@@ -122,51 +132,47 @@ int main(int argc, char *argv[]) {
   maxruntime (&argc, argv);
 
   if (argc > 1)
-    RE_tau  = atof (argv[1]);
+    Re_ast  = atof(argv[1]);
   if (argc > 2)
     BO = atof(argv[2]);
   if (argc > 3)
-    MAXLEVEL = atoi(argv[3]);
+    Re_wave = atof(argv[3]);
   if (argc > 4)
-    MINLEVEL = atoi(argv[4]);
+    UstarRATIO = atof(argv[4]);
   if (argc > 5)
-    c_ = atof(argv[5]);
+    ak = atof(argv[5]);
   if (argc > 6)
-    ak = atof(argv[6]);
+    r_L0lam = atof(argv[6]);
   if (argc > 7)
-    RELEASETIME = atof(argv[7]);
+    rho_r = atof(argv[7]);
   if (argc > 8)
-    uemaxRATIO = atof(argv[8]);
+    mu_r = atof(argv[8]);
   if (argc > 9)
-    alter_MU = atof(argv[9]);
+    MAXLEVEL = atoi(argv[9]);
   if (argc > 10)
-    end_sim  = atof(argv[10]);
+    MINLEVEL = atoi(argv[10]);
   if (argc > 11)
-    do_eta_loc = atoi(argv[11]); // do_eta_loc = 1 --> true, else --> false
+    RELEASETIME = atof(argv[11]);
   if (argc > 12)
-    do_profile = atoi(argv[12]); // do_profile = 1 --> true, else --> false
+    uemaxRATIO = atof(argv[12]);
   if (argc > 13)
-    do_fields  = atoi(argv[13]); // do_fields  = 1 --> true, else --> false
+    end_sim  = atof(argv[13]);
   if (argc > 14)
-    do_tagging = atoi(argv[14]); // do_tagging = 1 --> true, else --> false
+    do_eta_loc = atoi(argv[14]); // do_eta_loc = 1 --> true, else --> false
   if (argc > 15)
-    tout_eta   = atof(argv[15]); 
+    do_profile = atoi(argv[15]); // do_profile = 1 --> true, else --> false
   if (argc > 16)
-    tout_slc   = atof(argv[16]); 
+    do_fields  = atoi(argv[16]); // do_fields  = 1 --> true, else --> false
   if (argc > 17)
-    tout_pro   = atof(argv[17]); 
+    do_tagging = atoi(argv[17]); // do_tagging = 1 --> true, else --> false
   if (argc > 18)
-    tout_res   = atof(argv[18]); 
+    prt_res    = atoi(argv[18]); 
   if (argc > 19)
-    tout_mov   = atof(argv[19]); 
-  if (argc > 20)
-    prt_res    = atoi(argv[20]); 
-  if (argc > 21)
-    from_pr    = atoi(argv[21]);
+    from_pr    = atoi(argv[19]);
   
-  if (argc < 22) {
+  if (argc < 20) {
 
-    fprintf(ferr, "Lack of command line arguments. Check! Need %d more arguments\n", 21-argc);
+    fprintf(ferr, "Lack of command line arguments. Check! Need %d more arguments\n", 20-argc);
     return 1;
 
   }
@@ -174,25 +180,23 @@ int main(int argc, char *argv[]) {
   fprintf(stderr, "************************\n"), fflush (stderr);
   fprintf(stderr, "maximum runtime = %.10e seconds\n", _maxruntime), fflush (stderr);
   fprintf(stderr, "Check of input parameters only\n"), fflush (stderr);
-  fprintf(stderr, " RE_tau = %.10e\n ", RE_tau), fflush (stderr);
-  fprintf(stderr, " Bo     = %.10e\n ", BO), fflush (stderr);
-  fprintf(stderr, " MAX LEVEL  = %d\n ", MAXLEVEL), fflush (stderr);
-  fprintf(stderr, " MIN LEVEL  = %d\n ", MINLEVEL), fflush (stderr);
-  fprintf(stderr, " Wave speed = %.10e\n ", c_), fflush (stderr);
-  fprintf(stderr, " a_0k  = %.10e\n ", ak), fflush (stderr);
+  fprintf(stderr, " Re_ast = %.10e\n ", Re_ast), fflush (stderr);
+  fprintf(stderr, " Bo = %.10e\n ", BO), fflush (stderr);
+  fprintf(stderr, " Re_wave = %.10e\n ", Re_wave), fflush (stderr);
+  fprintf(stderr, " UstarRATIO = %.10e\n ", UstarRATIO), fflush (stderr);
+  fprintf(stderr, " a_0k = %.10e\n ", ak), fflush (stderr);
+  fprintf(stderr, " r_L0lam = %.10e\n ", r_L0lam), fflush (stderr);
+  fprintf(stderr, " Reference density = %8E\n ", rho_r), fflush (stderr);
+  fprintf(stderr, " Reference dynamic viscosity = %8E\n ", mu_r), fflush (stderr);
+  fprintf(stderr, " MAX LEVEL = %d\n ", MAXLEVEL), fflush (stderr);
+  fprintf(stderr, " MIN LEVEL = %d\n ", MINLEVEL), fflush (stderr);
   fprintf(stderr, " RELEASETIME = %.10e\n ", RELEASETIME), fflush (stderr);
   fprintf(stderr, " uemaxRatio = %.10e\n ", uemaxRATIO), fflush (stderr);
-  fprintf(stderr, " alter_MU = %.10e\n ", alter_MU), fflush (stderr);
-  fprintf(stderr, " tend  = %.10e\n ", end_sim), fflush (stderr);
+  fprintf(stderr, " tend = %.10e\n ", end_sim), fflush (stderr);
   fprintf(stderr, " do_eta_loc = %d\n ", do_eta_loc), fflush (stderr);
   fprintf(stderr, " do_profile = %d\n ", do_profile), fflush (stderr);
   fprintf(stderr, " do_fields  = %d\n ", do_fields), fflush (stderr);
   fprintf(stderr, " do_tagging = %d\n ", do_tagging), fflush (stderr);
-  fprintf(stderr, " Output frequency for eta_loc  = %.10e\n ", tout_eta), fflush (stderr);
-  fprintf(stderr, " Output frequency for slices   = %.10e\n ", tout_slc), fflush (stderr);
-  fprintf(stderr, " Output frequency for profiles = %.10e\n ", tout_pro), fflush (stderr);
-  fprintf(stderr, " Output frequency for restart  = %.10e\n ", tout_res), fflush (stderr);
-  fprintf(stderr, " Output frequency for movies   = %.10e\n ", tout_mov), fflush (stderr);
   fprintf(stderr, " Printing resolution = %d\n ", prt_res), fflush (stderr);
   fprintf(stderr, " Restart from precursor = %d\n ", from_pr), fflush (stderr);
   fprintf(stderr, "************************\n"), fflush (stderr);
@@ -201,9 +205,10 @@ int main(int argc, char *argv[]) {
      The domain is a cubic box centered on the origin and of length
      $L_0=2*\pi$, periodic in the x- and z-directions. */
 
-  L0 = 2*pi;
-  h_ = 1; // Water depth set L0/(2*pi) following Wu, Popinet & Deike JFM2022
-  k_ = 4; // Four waves per box
+  L0   = 2.0*pi;
+  h_   = L0/(2.0*pi); // Water depth set L0/(2*pi) following Wu, Popinet & Deike JFM2022
+  lam_ = L0/r_L0lam;
+  k_   = 2.0*pi/lam_;
   origin (-L0/2., 0, -L0/2.);
 
   // According to http://basilisk.fr/Basilisk%20C#boundary-conditions
@@ -220,51 +225,39 @@ int main(int argc, char *argv[]) {
   /**
      Here we set the densities and viscosities corresponding to the
      parameters above. Note that these variables are defined in two-phase.h already. 
-     To set the dimensional parameters we can use two strategies:
-       1. If we want to sweep the space $a_0k$ and $U_\star/c$, we set $Ustar$ to a fixed value, say 0.25, and we modify
-          $c$. This strategy allows to keep the same $Re_\tau$ and if we also alter the water viscosity, we can keep fixed Re_wave (strategy of Wu, Popinet and Deike, JFM2022)
-       2. More general choice: keep fix $c$ and modify $U_\star/c$, but we cannot keep Re_tau and Re_wave simultaneously fixed (unless to alter the properties ratio)
+     To set the dimensional parameters we can use three strategies:
+       1. $u_\ast$ to a fixed value and we modify $c$. This strategy allows to keep the same $Re_\ast$ and (1a) modify either the wave Reynolds number and keep fixed the viscosity ratio or (2a) modify the viscosity ratio and keep fixed the wave Reynolds number (strategy of Wu, Popinet and Deike, JFM2022);
+       2. $c$ to a fixed value and we modify $u_\ast$. This strategy allows to keep the same viscosity ratio and wave Reynolds number, but we change $Re_\ast$.
      */
 
-  //Ustar   = c_*UstarRATIO; // Obsolete
-  Ustar   = 0.25; // Pick a fixed value
-  rho1    = 1.;
-  rho2    = rho1*RHO_RATIO;
-  g_      = k_*sq(c_)/( 1.0+(rho1-rho2)/(rho1*BO) ); // tune g_ 
-  f.sigma = g_*(rho1-rho2)/(BO*sq(k_));
-  G.y     = -g_;
-  mu2     = Ustar*rho2*(L0-h_)/RE_tau;
-  mu1     = mu2/(MU_RATIO)/alter_MU;
-  RE      = rho1*c_*(2*pi/k_)/mu1; // RE now becomes a dependent Non-dim number on c
-  T0_     = 2.*pi/sqrt(g_*k_ + f.sigma*k_*k_*k_/rho1);
-  fprintf(stderr, "f.sigma  = %.10e\n ", f.sigma), fflush (stderr);
+  rho2     = rho_r;
+  mu2      = mu_r;
+  rho1     = rho2/RHO_RATIO;
+  Ustar    = (mu2*Re_ast)/(rho2*(L0-h_));
+  c_       = Ustar/UstarRATIO; 
+  g_       = k_*sq(c_)/( 1.0+(rho1-rho2)/(rho1*BO) ); // tune g_ 
+  f.sigma  = g_*(rho1-rho2)/(BO*sq(k_));
+  G.y      = -g_;
+  mu1      = rho1*c_*(2.*pi/k_)/Re_wave;
+  alter_MU = (mu2/mu1)/MU_RATIO;
+  T0_      = 2.*pi/sqrt(g_*k_ + f.sigma*k_*k_*k_/rho1);
     
-  /*
-  rho1    = 1.;
-  rho2    = rho1*RHO_RATIO;
-  g_      = k_*sq(c_)/( 1.0+(rho1-rho2)/(rho1*BO) ); // tune g_ 
-  f.sigma = g_*(rho1-rho2)/(BO*sq(k_));
-  c_      = sqrt(g_/k_ + f.sigma*k_/rho0);
-  Ustar   = c_*UstarRATIO;
-  G.y     = -g_;
-  mu2     = Ustar*rho2*(L0-h_)/RE_tau;
-  //mu1     = mu2/(MU_RATIO)/alter_MU;
-  mu1     = mu2/MU_RATIO;
-  RE      = rho1*c_*(2*pi/k_)/mu1; // RE now becomes a dependent Non-dim number on c
-  T0_     = 2.*pi/sqrt(g_*k_ + f.sigma*k_*k_*k_/rho1);
-  */
-
   /**
      Give the address of av[] to a[] so that acceleration can be changed */
 
   a = av;
-  init_grid (1 << 7);
+  
+  /**
+     We set the refinement level */
+
   // Refine according to 
   uemax  = uemaxRATIO*Ustar;
   uwemax = 0.001*c_;
-  fprintf (stderr, "RELEASETIME = %.10e, uemax = %.10e \n", RELEASETIME, uemax);
-
-  //DT = 1.0e-4;
+  fprintf (stderr, "RELEASETIME = %.10e, uemax = %.10e, uwemax = %.10e, femax = %.10e\n", 
+		   RELEASETIME, uemax, uwemax, femax);
+  
+  /**
+     We run! */
 
   run();
 
@@ -283,35 +276,68 @@ double WaveProfile (double x, double y) {
 			3.*sq(alpa) + 3.)*cube(a_)*sq(k_)*cos(k_*x) + 
     3./64.*(8.*cube(alpa)*cube(alpa) + 
 	    (sq(alpa) - 1.)*(sq(alpa) - 1.))*cube(a_)*sq(k_)*cos(3.*k_*x);
-  return eta1 + eta2 + eta3 + h_;
+  return eta1 + ak*eta2 + sq(ak)*eta3 + h_;
 
 }
 
 /** 
-   This function initalizes two cross-stream vortices for faster transition to turbulence. */
+   Specify the initial velocity field in the water
+   Note:
+   --> the analytical expression of u_x and u_y 
+       are consistent with a third-order Stokes wave. 
+   --> we added a correction for g_ to account for surface tension. */
 
-double fy (double y) {
-  double fy_f = (sq(1.0-sq(y)));
-  return fy_f;
+double u_x (double x, double y) {
+
+  double gt_  = g_ + f.sigma*k_*k_/rho1;
+  double alpa = 1./tanh(k_*h_);
+  double a_   = ak/k_;
+  double sgma = sqrt(gt_*k_*tanh(k_*h_)*
+		     (1. + k_*k_*a_*a_*(9./8.*(sq(alpa) - 1.)*
+					(sq(alpa) - 1.) + sq(alpa))));
+  double A_ = a_*gt_/sgma;
+  return A_*cosh(k_*(y + h_))/cosh(k_*h_)*k_*cos(k_*x) +
+    ak*3.*ak*A_/(8.*alpa)*(sq(alpa) - 1.)*(sq(alpa) - 1.)*
+    cosh(2.0*k_*(y + h_))*2.*k_*cos(2.0*k_*x)/cosh(2.0*k_*h_) +
+    ak*ak*1./64.*(sq(alpa) - 1.)*(sq(alpa) + 3.)*
+    (9.*sq(alpa) - 13.)*
+    cosh(3.*k_*(y + h_))/cosh(3.*k_*h_)*a_*a_*k_*k_*A_*3.*k_*cos(3.*k_*x);
+
 }
 
-double dfy (double y) {
-  double dfy_f = -4.0*y*(sq(1.0-sq(y)));
-  return dfy_f;
+double u_y (double x, double y) {
+
+  double gt_  = g_ + f.sigma*k_*k_/rho1;
+  double alpa = 1./tanh(k_*h_);
+  double a_   = ak/k_;
+  double sgma = sqrt(gt_*k_*tanh(k_*h_)*
+		     (1. + k_*k_*a_*a_*(9./8.*(sq(alpa) - 1.)*
+					(sq(alpa) - 1.) + sq(alpa))));
+  double A_ = a_*gt_/sgma;
+  return A_*k_*sinh(k_*(y + h_))/cosh(k_*h_)*sin(k_*x) +
+    ak*3.*ak*A_/(8.*alpa)*(sq(alpa) - 1.)*(sq(alpa) - 1.)*
+    2.*k_*sinh(2.0*k_*(y + h_))*sin(2.0*k_*x)/cosh(2.0*k_*h_) +
+    ak*ak*1./64.*(sq(alpa) - 1.)*(sq(alpa) + 3.)*
+    (9.*sq(alpa) - 13.)*
+    3.*k_*sinh(3.*k_*(y + h_))/cosh(3.*k_*h_)*a_*a_*k_*k_*A_*sin(3.*k_*x);
+
 }
 
-double gxz (double x, double z) {
-  double gxz_f = z*exp(-4.*(4.*sq(x)+sq(z)));
-  return gxz_f;
-}
+/** 
+   Return the the components and the module of the vorticity vector! */
 
-double dgxz (double x, double z) {
-  double dgxz_f = exp(-4.*(4.*sq(x)+sq(z)))*(1.-8.*sq(z));
-  return dgxz_f;
+void vorticity3D (vector u, vector omg, scalar omg_mod) {
+  foreach() {
+    omg.x[] = ( (u.z[0,1,0]-u.z[0,-1,0]) - (u.y[0,0,1]-u.y[0,0,-1]) )/(2.0*Delta);
+    omg.y[] = ( (u.x[0,0,1]-u.x[0,0,-1]) - (u.z[1,0,0]-u.z[-1,0,0]) )/(2.0*Delta);
+    omg.z[] = ( (u.y[1,0,0]-u.y[-1,0,0]) - (u.x[0,1,0]-u.x[0,-1,0]) )/(2.0*Delta);
+    omg_mod[] = 0.0;
+    foreach_dimension() {
+      omg_mod[] += sq(omg.x[]);
+    }
+    omg_mod[] = sqrt(omg_mod[]);
+  }
 }
-
-/**
-   Random noise gets killed by adaptive mesh refinement. Therefore, instead of initializing with a mean log profile plus random noise, we initialize with only the mean, and we wait for the instability to naturally develop (because of the shear profile). */
 
 # define POPEN(name, mode) fopen (name ".ppm", mode)
 
@@ -322,36 +348,30 @@ event init (i = 0) {
 
   fprintf(stderr, "************************\n"), fflush (stderr);
   fprintf(stderr, "A-posteriori check of simulation parameters\n"), fflush (stderr);
-  fprintf(stderr, " RE_tau = %.10e\n ", Ustar*rho2*(L0-h_)/mu2), fflush (stderr);
-  fprintf(stderr, " Bo    = %.10e\n ", g_*(rho1-rho2)/(f.sigma*sq(k_))), fflush (stderr);
-  fprintf(stderr, " MAX LEVEL  = %d\n ", MAXLEVEL), fflush (stderr);
-  fprintf(stderr, " MIN LEVEL  = %d\n ", MINLEVEL), fflush (stderr);
-  fprintf(stderr, " wave speed  = %.10e\n ", c_), fflush (stderr);
-  fprintf(stderr, " a_0k  = %.10e\n ", ak), fflush (stderr);
-  fprintf(stderr, " RELEASETIME  = %.10e\n ", RELEASETIME), fflush (stderr);
-  fprintf(stderr, " uemaxRATIO  = %.10e\n ", uemaxRATIO), fflush (stderr);
-  fprintf(stderr, " alter_MU  = %.10e\n ", alter_MU), fflush (stderr);
+  fprintf(stderr, " Re_ast = %.10e\n ", rho2*Ustar*(L0-h_)/mu2), fflush (stderr);
+  fprintf(stderr, " Bo = %.10e\n ", g_*(rho1-rho2)/(f.sigma*sq(k_))), fflush (stderr);
+  fprintf(stderr, " Re_wave = %.10e\n ", rho1*c_*(2*pi/k_)/mu1), fflush (stderr);
+  fprintf(stderr, " UstarRATIO = %.10e\n ", Ustar/c_), fflush (stderr);
+  fprintf(stderr, " a_0k = %.10e\n ", ak), fflush (stderr);
+  fprintf(stderr, " r_L0lam = %.10e\n ", r_L0lam), fflush (stderr);
+  fprintf(stderr, " Reference density = %8E\n ", rho_r), fflush (stderr);
+  fprintf(stderr, " Reference dynamic viscosity = %8E\n ", mu_r), fflush (stderr);
+  fprintf(stderr, " MAX LEVEL = %d\n ", MAXLEVEL), fflush (stderr);
+  fprintf(stderr, " MIN LEVEL = %d\n ", MINLEVEL), fflush (stderr);
+  fprintf(stderr, " RELEASETIME = %.10e\n ", RELEASETIME), fflush (stderr);
+  fprintf(stderr, " uemaxRATIO = %.10e\n ", uemaxRATIO), fflush (stderr);
+  fprintf(stderr, " alter_MU = %.10e\n ", alter_MU), fflush (stderr);
   fprintf(stderr, " end_sim  = %.10e\n ", end_sim), fflush (stderr);
   fprintf(stderr, " do_eta_loc = %d\n ", do_eta_loc), fflush (stderr);
   fprintf(stderr, " do_profile = %d\n ", do_profile), fflush (stderr);
   fprintf(stderr, " do_fields  = %d\n ", do_fields), fflush (stderr);
-  fprintf(stderr, " do_tagging  = %d\n ", do_tagging), fflush (stderr);
+  fprintf(stderr, " do_tagging = %d\n ", do_tagging), fflush (stderr);
   fprintf(stderr, " gravity = %.10e\n ", g_), fflush (stderr);
-  fprintf(stderr, " RE_wave = %.10e\n ", rho1*c_*(2*pi/k_)/mu1), fflush (stderr);
-  fprintf(stderr, " rho_r = %.10e\n ", (rho1/rho2)), fflush (stderr);
-  fprintf(stderr, " mu_r  = %.10e\n ", (mu1/mu2)), fflush (stderr);
-  fprintf(stderr, " UstarRATIO = %.10e\n ", Ustar/c_), fflush (stderr);
+  fprintf(stderr, " RHO_RATIO = %.10e\n ", (rho1/rho2)), fflush (stderr);
+  fprintf(stderr, " MU_RATIO  = %.10e\n ", (mu1/mu2)), fflush (stderr);
+  fprintf(stderr, " Surface tension  = %.10e\n ", f.sigma), fflush (stderr);
+  fprintf(stderr, " Friction velocity  = %.10e\n ", Ustar), fflush (stderr);
   fprintf(stderr, " T0 = %.10e\n ", T0_), fflush (stderr);
-  //fprintf(stderr, " Output frequency for eta_loc  = %.10e\n ", tout_eta), fflush (stderr);
-  //fprintf(stderr, " Output frequency for slices   = %.10e\n ", tout_slc), fflush (stderr);
-  //fprintf(stderr, " Output frequency for profiles = %.10e\n ", tout_pro), fflush (stderr);
-  //fprintf(stderr, " Output frequency for restart  = %.10e\n ", tout_res), fflush (stderr);
-  //fprintf(stderr, " Output frequency for movies   = %.10e\n ", tout_mov), fflush (stderr);
-  fprintf(stderr, " Output frequency for eta_loc  = %.10e\n ", tout_eta_my), fflush (stderr);
-  fprintf(stderr, " Output frequency for slices   = %.10e\n ", tout_slc_my), fflush (stderr);
-  fprintf(stderr, " Output frequency for profiles = %.10e\n ", tout_pro_my), fflush (stderr);
-  fprintf(stderr, " Output frequency for restart  = %.10e\n ", tout_res_my), fflush (stderr);
-  fprintf(stderr, " Output frequency for movies   = %.10e\n ", tout_mov_my), fflush (stderr);
 
   fprintf(stderr, " We_w = %.10e\n ", rho1*sq(c_)*(2.0*pi/k_)/f.sigma ), fflush (stderr);
   fprintf(stderr, " Fr_w = %.10e\n ", sq(c_)/(g_*2.0*pi/k_) ), fflush (stderr);
@@ -361,6 +381,17 @@ event init (i = 0) {
   fprintf(stderr, " Printing resolution = %d\n ", prt_res), fflush (stderr);
   fprintf(stderr, " Restart from precursor = %d\n ", from_pr), fflush (stderr);
   fprintf(stderr, "************************\n"), fflush (stderr);
+
+  /**
+     Ensure that u_water and f2s are not dumped */
+
+  foreach_dimension() {
+    u_water.x.nodump = true;
+  }
+  f2s.nodump = true;
+  my_stp_eta_f2s = 0.1/k_; // following Wu et al. (JFM2022)
+  //my_stp_eta_f2s = 4.0*L0/(pow(2,MAXLEVEL)); // following Wu et al. (JFM2022)
+  p_hd.nodump = true;
 
   /**
      Create directories for better organization of the output */
@@ -386,6 +417,8 @@ event init (i = 0) {
   system(comm);
   sprintf (comm, "mkdir -p budgets");
   system(comm);
+  sprintf (comm, "mkdir -p slices");
+  system(comm);
 
   /**
      Restart from the latest dump files or initialize a new simulation */
@@ -396,7 +429,7 @@ event init (i = 0) {
     scalar cs = new scalar; // temporary file just for restore 
     fprintf(stderr, "Scalar created\n"), fflush (stderr);
     restore ("restart_sp.bin");
-    delete ({cs}); // deleted since we use f
+    delete ({cs}); // deleted since we use f[] from now on
     fprintf(stderr, "Simulation restarts from a dumped file (SINGLE-PHASE)\n"), fflush (stderr);
 
     // Initalize the VoF profile with density
@@ -432,53 +465,27 @@ event init (i = 0) {
           width = 1300, height = 1300, bg = {1,1,1}, samples = 4);
     box(false, lc = {1,1,1}, lw = 0.1);
     draw_vof ("f", color = "u.x");
-    squares ("u.x", linear = true, n = {0,0,1}, alpha = -L0/2.0);
-    squares ("u.z", linear = true, n = {1,0,0}, alpha = -L0/2.0);
-    cells (n = {1,0,0}, alpha = -L0/2.0);
-    //sprintf (stg, "t = %0.3f", 2.0*pi*(t-RELEASETIME)/T0_);
+    squares ("u.x", linear = true, map = rain_cm   , n = {0,0,1}, alpha = -L0/2.0);
+    squares ("u.z", linear = true, map = balance_cm, n = {1,0,0}, alpha = -L0/2.0);
     sprintf (stg, "t = %0.3f", 2.0*pi*t/T0_);
     draw_string (stg, size = 30); 
     sprintf (file, "./3D_sp_%09d.ppm", i);
     save(file);
+
     /* 
-    u_water.x.nodump = true;
-    u_water.y.nodump = true;
-    u_water.z.nodump = true;
+    // Test 
     dump ("test_tw.bin");
-    //return 1;
+    return 1;
     */
+
   }
   else {
     if (restore ("restart.bin")) {
       fprintf(stderr, "Simulation restarts from a dumped file (TWO-PHASE)\n"), fflush (stderr);
     }
     else {
-      fprintf(stderr, "Initialization of all the variables\n"), fflush (stderr);
-      double ytau = (mu2/rho2)/Ustar;
-      do {
-        fraction (f, WaveProfile(x,z)-y);
-        foreach() {
-          // Initialize with a fairly accurate profile
-          if ((y-WaveProfile(x,z)) > 0.05) {
-            u.x[] = (1-f[])*(log((y-WaveProfile(x,z))/ytau)*Ustar/0.41);
-          }
-          else {
-            u.x[] = 0.;
-          }
-          double x_n = 2.0*(x-0.0*L0)/L0;
-          double y_n = 2.0*y/L0-1.2;
-          double z_n = 2.0*(z-0.0*L0)/L0;
-          u.y[] = (-1.0*gxz(z_n,x_n)*dfy(y_n)*Ubulk_ex*1.5)*(1.0-f[]);
-          u.z[] = (+1.0*fy(y_n)*dgxz(z_n,x_n)*Ubulk_ex*1.5)*(1.0-f[]);
-        }
-        boundary ((scalar *){u});
-      }
-#if TREE
-      // No need for adaptation when starting 
-      while (0);
-#else
-      while (0);
-#endif
+      fprintf(stderr, "Restarting file for two-phase simulation is absent! Please provide it!\n"), fflush (stderr);
+      return 1;
     }
   }
    
@@ -500,8 +507,43 @@ event log_simulation (i += 10) {
     char name_1[80];
     sprintf (name_1,"log_simulation.out");
     FILE * log_sim = fopen(name_1,"a");
-    fprintf (log_sim, "%.10e %.10e %.10e %d %d\n", t, 1.0*i, dt, max_level, min_level);
+    fprintf (log_sim, "%.10e %.10e %.10e %.10e %d %d\n", t, t-RELEASETIME, 1.0*i, dt, max_level, min_level);
     fclose(log_sim);
+  }
+
+  /**
+     We continue to log the quantities as in the precusor case
+     Remember to copy log_forcing.out of precursor! */
+
+  double u_air_mean = 0.;
+  double u_air_diff = 0.;
+  double u_wat_mean = 0.;
+  double voll_mean  = 0.;
+  double volg_mean  = 0.;
+  double volg_diff  = 0.;
+  foreach(reduction(+:u_air_mean) reduction(+:u_wat_mean)
+          reduction(+:volg_mean ) reduction(+:voll_mean )
+	  reduction(+:u_air_diff) reduction(+:volg_diff )) {
+    u_air_mean += u.x[]*(0.0+f[])*dv();
+    u_wat_mean += u.x[]*(1.0-f[])*dv();
+    u_air_diff += u.x[]*dv();
+    volg_mean  += (0.0+f[])*dv();
+    voll_mean  += (1.0-f[])*dv();
+    volg_diff  += dv();
+  }
+
+  if (pid() == 0) {
+
+    fflush(stderr);
+    char name_1[80];
+    sprintf (name_1,"log_forcing.out");
+    FILE * log_sim = fopen(name_1,"a");
+    fprintf (log_sim, "%8E %8E %8E %8E %8E %8E %8E %8E\n", 
+		      t, 1.0*i, volg_mean, u_air_mean/volg_mean,
+		      voll_mean, u_wat_mean/voll_mean,
+		      u_air_diff/volg_diff,volg_diff);
+    fclose(log_sim);
+
   }
 
 }
@@ -513,11 +555,10 @@ event set_wave(i=0; i++; t<RELEASETIME) {
 
   fraction (f, WaveProfile(x,z)-y);
   foreach() {
-    u.x[] = (1.0 - f[])*u.x[];
-    u.y[] = (1.0 - f[])*u.y[];
-    u.z[] = (1.0 - f[])*u.z[];
+    foreach_dimension() {
+      u.x[] = (1.0 - f[])*u.x[];
+    }
   }
-  boundary ((scalar *){u});
 
 }
 
@@ -525,44 +566,7 @@ event set_wave(i=0; i++; t<RELEASETIME) {
    Release the wave at RELEASETIME. We don't do any adaptation at this step. 
    */
 
-// TO-DO: maybe include g correction by Bond number. High Bond should be fine.
-
-double u_x (double x, double y) {
-
-  double alpa = 1./tanh(k_*h_);
-  double a_ = ak/k_;
-  double sgma = sqrt(g_*k_*tanh(k_*h_)*
-		     (1. + k_*k_*a_*a_*(9./8.*(sq(alpa) - 1.)*
-					(sq(alpa) - 1.) + sq(alpa))));
-  double A_ = a_*g_/sgma;
-  return A_*cosh(k_*(y + h_))/cosh(k_*h_)*k_*cos(k_*x) +
-    3.*ak*A_/(8.*alpa)*(sq(alpa) - 1.)*(sq(alpa) - 1.)*
-    cosh(2.0*k_*(y + h_))*2.*k_*cos(2.0*k_*x)/cosh(2.0*k_*h_) +
-    1./64.*(sq(alpa) - 1.)*(sq(alpa) + 3.)*
-    (9.*sq(alpa) - 13.)*
-    cosh(3.*k_*(y + h_))/cosh(3.*k_*h_)*ak*ak*A_*3.*k_*cos(3.*k_*x);
-
-}
-
-double u_y (double x, double y) {
-
-  double alpa = 1./tanh(k_*h_);
-  double a_ = ak/k_;
-  double sgma = sqrt(g_*k_*tanh(k_*h_)*
-		     (1. + k_*k_*a_*a_*(9./8.*(sq(alpa) - 1.)*
-					(sq(alpa) - 1.) + sq(alpa))));
-  double A_ = a_*g_/sgma;
-  return A_*k_*sinh(k_*(y + h_))/cosh(k_*h_)*sin(k_*x) +
-    3.*ak*A_/(8.*alpa)*(sq(alpa) - 1.)*(sq(alpa) - 1.)*
-    2.*k_*sinh(2.0*k_*(y + h_))*sin(2.0*k_*x)/cosh(2.0*k_*h_) +
-    1./64.*(sq(alpa) - 1.)*(sq(alpa) + 3.)*
-    (9.*sq(alpa) - 13.)*
-    3.*k_*sinh(3.*k_*(y + h_))/cosh(3.*k_*h_)*ak*ak*A_*sin(3.*k_*x);
-
-}
-
 event start(t = RELEASETIME) {
-  // A slightly changed version of the test/stokes.h wave function as y = 0 at the bottom now so y+h -> y
   
   fprintf(stderr, "t = RELEASETIME, we initialize the liquid velocity\n"), fflush (stderr);
   fraction (f, WaveProfile(x,z)-y);
@@ -570,7 +574,6 @@ event start(t = RELEASETIME) {
     u.x[] += u_x(x, y-h_)*f[];
     u.y[] += u_y(x, y-h_)*f[];
   }
-  boundary ((scalar *){u});
 
 }
 
@@ -580,8 +583,136 @@ event start(t = RELEASETIME) {
 event acceleration (i++) {
 
   double ampl = sq(Ustar)/(L0-h_);
-  foreach_face(x)
-    av.x[] += ampl*(1.-f[]);
+  foreach_face(x) {
+    double ff = (f[] + f[-1])/2.;
+    av.x[] += ampl*(1.0-ff);
+  }
+
+}
+
+event cmpt_f_shifted (t = RELEASETIME; t <= T0_*end_sim; t += T0_/tout_glo_my) {
+
+  // We initialize f2s to the latest available f
+  scalar_clone(f2s,f);
+  foreach() {
+    f2s[] = f[];
+  }
+  f2s.nodump = true; // we need to put here
+#if TREE
+  f2s.refine = f2s.prolongation = fraction_refine;
+  restriction({f2s});
+#endif
+
+  // We shift f2s of my_stp_eta
+  face vector uuf[]; coord ufv = {0, 1, 0};
+  foreach_face()
+    uuf.x[] = ufv.x;
+
+  double dt2_max = 0.50*CFL*L0/(1 << grid->maxdepth); // CFL = 0.8 and 0.50*CFL = 0.4, which is good for VoF
+  unsigned int num_min = my_stp_eta_f2s/(ufv.y*dt2_max);
+  double dt2 = my_stp_eta_f2s/(1.0*(num_min+1));
+  double yp = 0;
+  int ps_i = 0;
+  while (yp < my_stp_eta_f2s) {
+    vof_advection2 (f2s, dt2, uuf, i);
+    yp += dt2*ufv.y;
+    ps_i++;
+    fprintf(stderr, "translation of the VoF along y. Tmp pos: %g. Pseudo it: %d\n", yp, ps_i);
+  }
+
+  // We remove debris from f2s
+  if(do_remove) {
+    remove_droplets (f2s,min_size,threshold,false); // first remove droplets
+    remove_droplets (f2s,min_size,threshold,true);  // then remove bubbles
+  }
+
+  // We estimate the pressure with the hydrostatic load
+  // Note we need to use f[] to remove the load correctly
+  scalar phi_1[];
+#if dimension > 2
+  coord Z_hd = {0.,0.,0.};
+#else
+  coord Z_hd = {0.,0.};
+#endif
+  position (f, phi_1, G, Z_hd, add = false);
+  scalar_clone(p_hd,p);
+  foreach() {
+    p_hd[] = p[];
+  }
+  p_hd.nodump = true; // we need to put here
+  foreach() { 
+    ///*
+    if(interfacial(point,f)) {
+      p_hd[] += rhov[]*phi_1[];
+    }
+    else {
+      coord o = {x,y,z};
+      foreach_dimension() {
+        p_hd[] += rhov[]*G.x*o.x;
+      }
+    }
+    //*/
+  }
+
+  /*
+  int int_pt1 = 0;
+  foreach(reduction(+:int_pt1)) { 
+    if (interfacial (point, f)) {
+      //if (point.level == MAXLEVEL) {
+        coord n = interface_normal(point, f), pp;
+        double alpha1 = plane_alpha (f[], n);
+        plane_area_center(n, alpha1, &pp);
+        double xc = x + Delta*pp.x;
+        double yc = y + Delta*pp.y;
+        double zc = z + Delta*pp.z;
+	zc *= (dimension - 2);
+	Point point1 = locate (xc, yc, zc);
+	if (point1.level > 0) { // best case
+	  POINT_VARIABLES;
+	  int_pt1++;
+	}
+      //}
+    }
+  }
+
+  int int_pt2 = 0;
+  foreach(reduction(+:int_pt2)) { 
+    if (interfacial (point, f2s)) {
+      //if (point.level == MAXLEVEL) {
+        coord n = interface_normal(point, f2s), pp;
+        double alpha1 = plane_alpha (f2s[], n);
+        plane_area_center(n, alpha1, &pp);
+        double xc = x + Delta*pp.x;
+        double yc = y + Delta*pp.y;
+        double zc = z + Delta*pp.z;
+	zc *= (dimension - 2);
+	Point point1 = locate (xc, yc, zc);
+	if (point1.level > 0) { // best case
+	  POINT_VARIABLES;
+	  int_pt2++;
+	}
+      //}
+    }
+  }
+
+  fprintf(stderr, "# int pt in f[]=   %09d\n", int_pt1); fflush (stderr);
+  fprintf(stderr, "# int pt in f2s[]= %09d\n", int_pt2); fflush (stderr);
+
+  // Output an image for checking 
+  char stg[80];
+  char file[99];
+  clear();
+  view (fov = 27.5,  
+        theta = pi/4.0, phi = pi/50.0, psi = 0.0, ty = -0.5,
+        width = 1300, height = 1300, bg = {1,1,1}, samples = 4);
+  box(false, lc = {1,1,1}, lw = 0.1);
+  draw_vof ("f"  , color = "u.x");
+  draw_vof ("f2s", color = "u.x");
+  sprintf (stg, "t = %0.3f", 2.0*pi*t/T0_);
+  draw_string (stg, size = 30); 
+  sprintf (file, "./3D_shift_%09d.ppm", i);
+  save(file);
+  */
 
 }
 
@@ -591,15 +722,14 @@ event acceleration (i++) {
 
 //# define POPEN(name, mode) fopen (name ".ppm", mode)
 
-//event movies (t = RELEASETIME; t <= T0_*end_sim; t += T0_/tout_mov) {
 event movies (t = RELEASETIME; t <= T0_*end_sim; t += T0_/tout_mov_my) {
 //event movies (i += 2) {
 
-  //fprintf(stderr, "I output the movies every t=%.10e\n", T0_/tout_mov); fflush (stderr);
   fprintf(stderr, "I output the movies every t=%.10e\n", T0_/tout_mov_my); fflush (stderr);
   
-  scalar omega[];
-  vorticity (u, omega);
+  vector omg[];
+  scalar omg_mod[];
+  vorticity3D (u, omg, omg_mod);
 
   char stg[80];
  
@@ -609,9 +739,8 @@ event movies (t = RELEASETIME; t <= T0_*end_sim; t += T0_/tout_mov_my) {
 	width = 1300, height = 1300, bg = {1,1,1}, samples = 4);
   box(false, lc = {1,1,1}, lw = 0.1);
   draw_vof ("f", color = "u.x");
-  squares ("u.x", linear = true, n = {0,0,1}, alpha = -L0/2.0);
-  squares ("omega", linear = true, n = {1,0,0}, alpha = -L0/2.0);
-  //cells (n = {1,0,0}, alpha = -L0/2.0);
+  squares ("u.x"  , linear = true, map = rain_cm   , n = {0,0,1}, alpha = -L0/2.0);
+  squares ("omg.x", linear = true, map = balance_cm, n = {1,0,0}, alpha = -L0/2.0);
   sprintf (stg, "t = %0.3f", 2.0*pi*(t-RELEASETIME)/T0_);
   draw_string (stg, size = 30); 
   {
@@ -625,8 +754,8 @@ event movies (t = RELEASETIME; t <= T0_*end_sim; t += T0_/tout_mov_my) {
         //theta = 0.0, phi = -pi/240.0, psi = 0.0, ty = -0.5,
         width = 1300, height = 1300, bg = {1,1,1}, samples = 4);
   box(false, lc = {1,1,1}, lw = 0.1);
-  draw_vof ("f", color = "omega");
-  squares ("u.x", linear = true, n = {0,0,1}, alpha = -L0/2.0);
+  draw_vof ("f");
+  squares ("u.x", linear = true, map = rain_cm, n = {0,0,1}, alpha = -L0/2.0);
   sprintf (stg, "t = %0.3f", 2.0*pi*(t-RELEASETIME)/T0_);
   draw_string (stg, size = 30, pos = 3); 
   {
@@ -637,94 +766,64 @@ event movies (t = RELEASETIME; t <= T0_*end_sim; t += T0_/tout_mov_my) {
 
 }
 
-void profile_output (int istep) {
-
-  char file[99];
-  sprintf (file, "./profiles/prof_%09d.out", istep);
-
-  scalar omega = new scalar;
-  vorticity (u, omega);
-
-  scalar uv = new scalar; scalar duy = new scalar; 
-  scalar diss = new scalar; scalar ke = new scalar;
-  scalar vke = new scalar; scalar dkdy = new scalar;
-  foreach () {
-    double dudx = (u.x[1]     - u.x[-1]    )/(2.*Delta);
-    double dudy = (u.x[0,1]   - u.x[0,-1]  )/(2.*Delta);
-    double dudz = (u.x[0,0,1] - u.x[0,0,-1])/(2.*Delta);
-    double dvdx = (u.y[1]     - u.y[-1]    )/(2.*Delta);
-    double dvdy = (u.y[0,1]   - u.y[0,-1]  )/(2.*Delta);
-    double dvdz = (u.y[0,0,1] - u.y[0,0,-1])/(2.*Delta);
-    double dwdx = (u.z[1]     - u.z[-1]    )/(2.*Delta);
-    double dwdy = (u.z[0,1]   - u.z[0,-1]  )/(2.*Delta);
-    double dwdz = (u.z[0,0,1] - u.z[0,0,-1])/(2.*Delta);
-    double SDeformxx = dudx;
-    double SDeformxy = 0.5*(dudy + dvdx);
-    double SDeformxz = 0.5*(dudz + dwdx);
-    double SDeformyx = SDeformxy;
-    double SDeformyy = dvdy;
-    double SDeformyz = 0.5*(dvdz + dwdy);
-    double SDeformzx = SDeformxz;
-    double SDeformzy = SDeformyz;
-    double SDeformzz = dwdz; 
-    double sqterm = 2.*( sq(SDeformxx) + sq(SDeformxy) + sq(SDeformxz) +
-        	         sq(SDeformyx) + sq(SDeformyy) + sq(SDeformyz) +
-      		         sq(SDeformzx) + sq(SDeformzy) + sq(SDeformzz) );
-    uv[]   = u.x[]*u.y[];
-    duy[]  = dudy; 
-    diss[] = sqterm;
-    foreach_dimension() { 
-      ke[] += u.x[]*u.x[];
-    }
-    vke[] = u.y[]*ke[];
-  }
-  foreach() {
-    dkdy[] = (ke[0,1]-ke[0,-1])/(2.*Delta);
-  }
-
-  vertex scalar phi[];
-  foreach_vertex() {
-    phi[] = y;
-  }
-
-  profiles ({u.x, u.y, u.z, p, omega, uv, duy, diss, ke, vke, dkdy}, phi, rf = 1.0, fname = file, n = 1 << MAXLEVEL);
-  delete({omega,uv,duy,diss,ke,vke,dkdy});
-
-}
-
-//event out_pro (t = RELEASETIME; t <= T0_*end_sim; t += T0_/tout_pro) {
 event out_pro (t = RELEASETIME; t <= T0_*end_sim; t += T0_/tout_pro_my) {
 //event out_pro (i += 2) {
 
   if (do_profile == 1) {
 
-    //fprintf(stderr, "I output the vertical profiles file every t=%.10e\n", T0_/tout_pro);
     fprintf(stderr, "I output the vertical profiles file every t=%.10e\n", T0_/tout_pro_my);
-    profile_output (i);
+
+    // We compute the vertical coordinate
+    vertex scalar phi_v1[];
+    foreach_vertex() {
+      phi_v1[] = y;
+    }
+
+    // We compute with the level-set
+    /*
+    //vertex scalar phi_v2[];
+    scalar phi_v2[];
+    int imax = 512;
+    vof_to_ls (f, phi_v2, imax);
+    foreach_vertex() {
+      phi_v2[] = fabs(y-1.0) > 0.2 ? y : -phi_v2[]; 
+      //phi_v2[] = phi_v2[]; 
+    }
+    */
+    
+    char file[99];
+
+    sprintf (file, "./profiles/prof_%09d_v1.out", i); // only vertical coordinate
+    profile_output (u, p, p_hd, phi_v1, i, MAXLEVEL, file);
     fflush (stderr);
    
+    /* 
+    sprintf (file, "./profiles/prof_%09d_v2.out", i); // level-set
+    profile_output (u, p, p_hd, phi_v2, i, MAXLEVEL, file);
+    fflush (stderr);
+    */
+  
     if (pid() == 0) {
     
       char name_1[80];
       sprintf (name_1,"./profiles/log_pro.out");
       FILE * log_sim = fopen(name_1,"a");
-      fprintf (log_sim, "%.10e %.10e\n", t, 1.0*i);
+      fprintf (log_sim, "%.10e %.10e %.10e\n", t, t-RELEASETIME, 1.0*i);
       fclose(log_sim);
     
     }
+    //return 1;
 
   }
 
 }
 
-//event slice_stat (t = RELEASETIME; t <= T0_*end_sim; t += T0_/tout_slc) {
-event slice_stat (t = RELEASETIME; t <= T0_*end_sim; t += T0_/tout_slc_my) {
-//event slice_stat (i += 2) {
+event fields (t = RELEASETIME; t <= T0_*end_sim; t += T0_/tout_fld_my) {
+//event fields (i += 2) {
 
   if (do_fields == 1) {
 
-    //fprintf(stderr, "I output the slices every t=%.10e\n", T0_/tout_slc), fflush (stderr);
-    fprintf(stderr, "I output the slices every t=%.10e\n", T0_/tout_slc_my), fflush (stderr);
+    fprintf(stderr, "I output the fields every t=%.10e\n", T0_/tout_fld_my), fflush (stderr);
 
     char filename[100];
     int res        = prt_res;
@@ -742,7 +841,7 @@ event slice_stat (t = RELEASETIME; t <= T0_*end_sim; t += T0_/tout_slc_my) {
     sprintf (filename, "./field/pr_2d_avg_%09d.bin", i); // pressure
     output_2d_span_avg (filename,p    ,res, do_linear, print_bin);
 
-    // Compute some quantities (we defined as new scalar so we can delete as soon as they are used)
+    // Compute some quantities (we defined as new scalar so we can delete as soon as they have been used)
     scalar omega = new scalar;
     vorticity (u, omega);
     sprintf (filename, "./field/ow_2d_avg_%09d.bin", i); // omega
@@ -776,15 +875,11 @@ event slice_stat (t = RELEASETIME; t <= T0_*end_sim; t += T0_/tout_slc_my) {
       uv[]   = u.x[]*u.y[];
       duy[]  = dudy; 
       diss[] = sqterm;
-      foreach_dimension() { 
-        ke[] += u.x[]*u.x[];
+      ke[] = 0.0;
+      foreach_dimension() {
+        ke[] += sq(u.x[]);
       }
       vke[] = u.y[]*ke[];
-
-    }
-    scalar dkdy[];
-    foreach() {
-      dkdy[] = (ke[0,1]-ke[0,-1])/(2.*Delta);
     }
 
     sprintf (filename, "./field/uv_2d_avg_%09d.bin", i); // uv
@@ -797,6 +892,11 @@ event slice_stat (t = RELEASETIME; t <= T0_*end_sim; t += T0_/tout_slc_my) {
     output_2d_span_avg (filename,vke  ,res, do_linear, print_bin); delete({vke});
     sprintf (filename, "./field/di_2d_avg_%09d.bin", i); // dissipation
     output_2d_span_avg (filename,diss ,res, do_linear, print_bin); delete({diss});
+    
+    scalar dkdy = new scalar;
+    foreach() {
+      dkdy[] = (ke[0,1]-ke[0,-1])/(2.*Delta);
+    }
     sprintf (filename, "./field/dk_2d_avg_%09d.bin", i); // dkdy
     output_2d_span_avg (filename,dkdy ,res, do_linear, print_bin); delete({dkdy});
 
@@ -805,7 +905,7 @@ event slice_stat (t = RELEASETIME; t <= T0_*end_sim; t += T0_/tout_slc_my) {
       char name_1[80];
       sprintf (name_1,"./field/log_field.out");
       FILE * log_sim = fopen(name_1,"a");
-      fprintf (log_sim, "%.10e %.10e\n", t, 1.0*i);
+      fprintf (log_sim, "%.10e %.10e %.10e\n", t, t-RELEASETIME, 1.0*i);
       fclose(log_sim);
     
     }
@@ -815,294 +915,66 @@ event slice_stat (t = RELEASETIME; t <= T0_*end_sim; t += T0_/tout_slc_my) {
 
 }
 
-/**
-   We want to compute some global observables */
+event cut_spec (t = RELEASETIME; t <= T0_*end_sim; t += T0_/tout_cut_my) {
+//event cut_spec (i += 2) {
 
-void output_global_obs_1 (char * fname, int istep, scalar c, scalar p_a, double stp_eta) {
+  if (do_fields == 1) {
 
-  // Preliminary calculations
- 
-  // --> position
-  scalar pos[];
-#if dimension > 2
-  coord G = {0.,1.,0.}, Z = {0.,0.,0.};
-#else
-  coord G = {0.,1.}, Z = {0.,0.};
-#endif
-  position (c, pos, G, Z);
+    //fprintf(stderr, "I output the cuts every t=%.10e\n", T0_/tout_cut), fflush (stderr);
+    fprintf(stderr, "I output the cuts every t=%.10e\n", T0_/tout_cut_my), fflush (stderr);
 
-  // --> my diagnosis of eta_my, area_my, amp_my (without offsets)
-  double area_my = 0; double eta_my = 0;
-  foreach(reduction(+:area_my), reduction(+:eta_my)) {
-    if (interfacial (point, c)) {
-      //if (point.level == MAXLEVEL) {
-      if (point.level == MAXLEVEL && abs(pos[]-eta_m0) < cirp_th) {
-      //if (abs(pos[]-eta_m0) < cirp_th) {
-        coord n      = interface_normal(point, c), pp;
-        double alpha = plane_alpha (c[], n);
-        double ar    = pow(Delta, dimension - 1)*plane_area_center (n, alpha, &pp);
-	area_my += ar;
-	eta_my  += ar*pos[]; // already defined at the interface
-      }
+    char filename[100];
+    int res        = prt_res;
+    bool do_linear = true;
+
+    int len = 2;
+    double pos[len]; 
+    for (int i = 0; i < len; i++) {
+      double stp = L0/4.0;
+      pos[i] = -L0/4.0+i*stp;
     }
-  }
-  area_my += 1.0e-12; // to prevent arithmetic failure if area = 0
-  eta_my   = eta_my/area_my;
-  fprintf(stderr, "area %.10e, eta %.10e\n", area_my, eta_my);
 
-  // --> my diagnosis of eta_my, area_my, amp_my (we want to just do it at the interface)
-  double amp2_my = 0;
-  foreach(reduction(+:amp2_my)) {
-    if (interfacial (point, c)) {
-      //if (point.level == MAXLEVEL) {
-      if (point.level == MAXLEVEL && abs(pos[]-eta_m0) < cirp_th) {
-      //if (abs(pos[]-eta_m0) < cirp_th) {
-        coord n = interface_normal(point, c), pp;
-        double alpha = plane_alpha (c[], n);
-        double ar = pow(Delta, dimension - 1)*plane_area_center (n, alpha, &pp);
-        amp2_my += ar*2.0*sq(pos[]-eta_my);
-      }
+    scalar uv[];
+    foreach () {
+      uv[] = u.x[]*u.y[];
     }
-  }
-  amp2_my = amp2_my/area_my;
 
-  // --> compute some mean quantities to be used later (with offset)
-  double area = 0; double eta_m = 0; double pr_m = 0;
-  double u_xi = 0; double u_yi  = 0; double u_zi = 0;
-  foreach(reduction(+:area), reduction(+:eta_m), reduction(+:pr_m),
-	  reduction(+:u_xi), reduction(+:u_yi) , reduction(+:u_zi)) {
-    if (interfacial (point, c)) {
-      //if (point.level == MAXLEVEL) {
-      if (point.level == MAXLEVEL && abs(pos[]-eta_m0) < cirp_th) {
-      //if (abs(pos[]-eta_m0) < cirp_th) {
-	coord n      = interface_normal(point, c), pp;
-        double alpha = plane_alpha (c[], n);
-        double ar    = pow(Delta, dimension - 1)*plane_area_center (n, alpha, &pp);
-	double eta   = pos[]; // must be here since here it is defined
-        double xc = x + Delta*pp.x;
-        double yc = y + Delta*pp.y + stp_eta;
-        double zc = z + Delta*pp.z;
-#if dimension > 2
-	Point point1 = locate (xc, yc, zc);
-#else
-	Point point1 = locate (xc, yc);
-#endif
-	if (point1.level > 0) {
-        
-	  POINT_VARIABLES;
-	
-	  area  += ar;
-	  eta_m += ar*eta; // already defined at the interface
+    scalar omega[];
+    vorticity (u, omega);
 
-          pr_m += ar*my_interpolation(point, p_a, xc, yc, zc);
-          u_xi += ar*my_interpolation(point, u.x, xc, yc, zc);
-          u_yi += ar*my_interpolation(point, u.y, xc, yc, zc);
-#if dimension > 2
-          u_zi += ar*my_interpolation(point, u.z, xc, yc, zc);
-#else
-	  u_zi = 0.;
-#endif
-
-	}
-      }
+    for (int s = 0; s < len; s++) {
+      double stp = pos[s];
+      sprintf (filename, "./slices/ux_2d_%09d_%03d.bin", i, s); // x-vel
+      sliceXY (filename, u.x, stp, res, do_linear);
+      sprintf (filename, "./slices/uy_2d_%09d_%03d.bin", i, s); // y-vel
+      sliceXY (filename, u.y, stp, res, do_linear);
+      sprintf (filename, "./slices/uz_2d_%09d_%03d.bin", i, s); // z-vel
+      sliceXY (filename, u.z, stp, res, do_linear);
+      sprintf (filename, "./slices/fv_2d_%09d_%03d.bin", i, s); // VoF
+      sliceXY (filename, f  , stp, res, do_linear);
+      sprintf (filename, "./slices/uv_2d_%09d_%03d.bin", i, s); // uv
+      sliceXY (filename, uv , stp, res, do_linear);
+      sprintf (filename, "./slices/om_2d_%09d_%03d.bin", i, s); // vorticity
+      sliceXY (filename, omega, stp, res, do_linear);
     }
-  }
-  area  += 1.0e-12; // to prevent arithmetic failure if area = 0
-  eta_m  = eta_m/area; // we need the mean surface elevation
-  pr_m   = pr_m/area;  // we need the mean pressure
-  u_xi   = u_xi/area; u_yi = u_yi/area; u_zi = u_zi/area;
-  //fprintf(stderr, "area %.10e, eta %.10e, pr_m %.10e\n", area, eta_m, pr_m);
-  //fprintf(stderr, "u.x %.10e, u.y %.10e, u.z %.10e\n", u_xi, u_yi, u_zi);
 
-  // --> quantities to be probed at the interface
-  // n.b.: for the stress we can use just u since it contains derivatives
-  scalar Sxx[]; scalar Syy[]; scalar Szz[];
-  scalar Sxy[]; scalar Sxz[]; scalar Syz[];
-  foreach() {
-    double dudx = (u.x[1]     - u.x[-1]    )/(2.*Delta);
-    double dudy = (u.x[0,1]   - u.x[0,-1]  )/(2.*Delta);
-    double dudz = (u.x[0,0,1] - u.x[0,0,-1])/(2.*Delta);
-    double dvdx = (u.y[1]     - u.y[-1]    )/(2.*Delta);
-    double dvdy = (u.y[0,1]   - u.y[0,-1]  )/(2.*Delta);
-    double dvdz = (u.y[0,0,1] - u.y[0,0,-1])/(2.*Delta);
-    double dwdx = (u.z[1]     - u.z[-1]    )/(2.*Delta);
-    double dwdy = (u.z[0,1]   - u.z[0,-1]  )/(2.*Delta);
-    double dwdz = (u.z[0,0,1] - u.z[0,0,-1])/(2.*Delta);
-    Sxx[] = dudx+dudx; 
-    Syy[] = dvdy+dvdy;
-    Szz[] = dwdz+dwdz;
-    Sxy[] = dudy+dvdx;
-    Sxz[] = dudz+dwdx;
-    Syz[] = dvdz+dwdy;
-  }
-  boundary({Sxx,Syy,Szz,Sxy,Sxz,Syz}); // must be kept
-
-  // --> compute the amplitude, stress, velocity at the interface, energy fluxes
-  double amp2  = 0.0;
-  double mf_px = 0.0; double mf_py = 0.0; double mf_pz = 0.0; // mom. flux pressure
-  double mp_px = 0.0; double mp_py = 0.0; double mp_pz = 0.0; // mean pressure contribution
-  double mf_vx = 0.0; double mf_vy = 0.0; double mf_vz = 0.0; // mom. flux viscous stress
-  double ef_pn = 0.0; double ef_pp = 0.0; // en. flux pressure (without-with subtraction)
-  double ef_fn = 0.0; double ef_fp = 0.0; // en. flux pressure (no mean pressure)
-  double ef_vn = 0.0; double ef_vp = 0.0; // en. flux viscous stress
-  double ep_gs = 0.0;
-  foreach(reduction(+:amp2), // amplitude 
-	  reduction(+:mf_px), reduction(+:mf_py), reduction(+:mf_pz), // pressure - momentum flux (x,y,z)
-	  reduction(+:mp_px), reduction(+:mp_py), reduction(+:mp_pz), // pressure - momentum flux (x,y,z) - (mean pressure)
-	  reduction(+:mf_vx), reduction(+:mf_vy), reduction(+:mf_vz), // viscous  - momentum flux (x,y,z)
-	  reduction(+:ef_pn), reduction(+:ef_pp), // pressure en flux (without-with subtraction)
-	  reduction(+:ef_fn), reduction(+:ef_fp), // pressure en flux (without the mean pressure)
-	  reduction(+:ef_vn), reduction(+:ef_vp), // viscous en flux (without-with subtraction)
-	  reduction(+:ep_gs)) { // gravitational energy due to surface tension
-    if (interfacial (point, c)) {
-      //if (point.level == MAXLEVEL) {
-      if (point.level == MAXLEVEL && abs(pos[]-eta_m0) < cirp_th) {
-      //if (abs(pos[]-eta_m0) < cirp_th) {
-	coord n      = interface_normal(point, c), pp;
-        double alpha = plane_alpha (c[], n);
-        double ar    = pow(Delta, dimension - 1)*plane_area_center (n, alpha, &pp);
-	double eta   = pos[]; // must be here since here it is defined
-	normalize (&n); // |n| = 1, we should normalize since we use the normals for online calculations
-        double xc = x + Delta*pp.x;
-        double yc = y + Delta*pp.y + stp_eta;
-        double zc = z + Delta*pp.z;
-#if dimension > 2
-	Point point1 = locate (xc, yc, zc);
-#else
-	Point point1 = locate (xc, yc);
-#endif
-	if (point1.level > 0) {
-        
-	  POINT_VARIABLES;
-	
-	  amp2 += ar*2.0*sq(eta-eta_m); // amplitude
- 
-          double pr_int = 0;   
-	  double Sxx_int = 0; double Syy_int = 0; double Szz_int = 0;
-	  double Sxy_int = 0; double Sxz_int = 0; double Syz_int = 0;
-	  double ux_int  = 0; double uy_int  = 0; double uz_int  = 0;
-
-          pr_int  = my_interpolation(point, p_a, xc, yc, zc);
-	  Sxx_int = my_interpolation(point, Sxx, xc, yc, zc);
-	  Syy_int = my_interpolation(point, Syy, xc, yc, zc);
-	  Szz_int = my_interpolation(point, Szz, xc, yc, zc);
-	  Sxy_int = my_interpolation(point, Sxy, xc, yc, zc);
-	  Sxz_int = my_interpolation(point, Sxz, xc, yc, zc);
-	  Syz_int = my_interpolation(point, Syz, xc, yc, zc);
-	  ux_int  = my_interpolation(point, u.x, xc, yc, zc);
-	  uy_int  = my_interpolation(point, u.y, xc, yc, zc);
-#if dimension > 2
-          uz_int  = my_interpolation(point, u.z, xc, yc, zc);
-#else
-	  uz_int  = 0.;
-#endif
-
-          // momentum flux --> pressure	  
-	  mf_px += ar*( -(pr_int)*n.x ); // x-Mom. flux due to pressure work
-	  mf_py += ar*( -(pr_int)*n.y ); // y-Mom. flux due to pressure work
-	  mf_pz += ar*( -(pr_int)*n.z ); // z-Mom. flux due to pressure work
-	  
-	  mp_px += ar*( +(pr_m)*n.x ); // mean pressure contribution - x
-	  mp_py += ar*( +(pr_m)*n.y ); // mean pressure contribution - y
-	  mp_pz += ar*( +(pr_m)*n.z ); // mean pressure contribution - z
-	  
-	  // momentum flux --> viscous stress
-	  mf_vx += ar*mu2*(n.x*Sxx_int + n.y*Sxy_int + n.z*Sxz_int); // x-Mom. flux due to viscous dissipation
-          mf_vy += ar*mu2*(n.x*Sxy_int + n.y*Syy_int + n.z*Syz_int); // y-Mom. flux due to viscous dissipation
-          mf_vz += ar*mu2*(n.x*Sxz_int + n.y*Syz_int + n.z*Szz_int); // z-Mom. flux due to viscous dissipation
-          
-	  // energy flux --> pressure
-	  ef_pn += ar*( -(pr_int-pr_m)*( (ux_int)*n.x+(uy_int)*n.y+(uz_int)*n.z) ); // En. flux due to pressure (no vel. subtraction)
-	  ef_pp += ar*( -(pr_int-pr_m)*( (ux_int-u_xi)*n.x+(uy_int-u_yi)*n.y+(uz_int-u_zi)*n.z) ); // En. flux due to pressure
-	  ef_fn += ar*( -(pr_int)*( (ux_int)*n.x+(uy_int)*n.y+(uz_int)*n.z) ); // En. flux due to pressure (no vel. subtraction)
-	  ef_fp += ar*( -(pr_int)*( (ux_int-u_xi)*n.x+(uy_int-u_yi)*n.y+(uz_int-u_zi)*n.z) ); // En. flux due to pressure
-
-	  // energy flux --> viscous stress
-	  ef_vn += ar*mu2*( ( Sxx_int*n.x + Sxy_int*n.y + Sxz_int*n.z )*(ux_int) +
-	                    ( Sxy_int*n.x + Syy_int*n.y + Syz_int*n.z )*(uy_int) +
-	                    ( Sxz_int*n.x + Syz_int*n.y + Szz_int*n.z )*(uz_int) ); // En. flux due to viscous dissipation (no vel. subtraction)
-          ef_vp += ar*mu2*( ( Sxx_int*n.x + Sxy_int*n.y + Sxz_int*n.z )*(ux_int-u_xi) +
-	                    ( Sxy_int*n.x + Syy_int*n.y + Syz_int*n.z )*(uy_int-u_yi) +
-	                    ( Sxz_int*n.x + Syz_int*n.y + Szz_int*n.z )*(uz_int-u_zi) ); // En. flux due to viscous dissipation
-	  
-	  ep_gs += ar*f.sigma*(sqrt(1.0+sq(n.x)+sq(n.z))-1.0); // potential energy due to surface tension
- 
-	}
-      }
+    if (pid() == 0) {
+    
+      char name_1[80];
+      sprintf (name_1,"./slices/log_cut.out");
+      FILE * log_sim = fopen(name_1,"a");
+      fprintf (log_sim, "%.10e %.10e %.10e\n", t, t-RELEASETIME, 1.0*i);
+      fclose(log_sim);
+    
     }
-  }
-  amp2 = amp2/area;
-
-  // --> compute quantities at the top/bottom boundary (for y-mom in air and water)
-  /*
-  double pre_a_m = 0.0, pre_w_m = 0.0;
-  double vol_a_m = 0.0, vol_w_m = 0.0;
-  foreach(reduction(+:pre_a_m) reduction(+:pre_w_m)
-          reduction(+:vol_a_m) reduction(+:vol_w_m)) {
-    pre_a_m = pre_a_m + (1.0-f[])*p[]*dv();
-    pre_w_m = pre_w_m + (0.0+f[])*p[]*dv();
-    vol_a_m = vol_a_m + (1.0-f[])*dv();
-    vol_w_m = vol_w_m + (0.0+f[])*dv();
-  }
-  pre_a_m /= vol_a_m; pre_w_m /= vol_w_m;
-  */
-
-  double pre_a_m = 0.0;
-  foreach_boundary(top,reduction(+:pre_a_m)) {
-    double ff = 0.5*(f[0,1,0]+f[]);
-    double pf = 0.5*(p[0,1,0]+p[]);
-    pre_a_m = pre_a_m + (1.0-ff)*pf*sq(Delta);
-  }
-  pre_a_m = pre_a_m/sq(L0);
-
-  double pre_w_m = 0.0;
-  foreach_boundary(bottom,reduction(+:pre_w_m)) {
-    double ff = 0.5*(f[0,-1,0]+f[]);
-    double pf = 0.5*(p[0,-1,0]+p[]);
-    pre_w_m = pre_w_m + (0.0+ff)*pf*sq(Delta);
-  }
-  pre_w_m = pre_w_m/sq(L0);
-
-  double py_a_flux = 0.0, tx_a_flux = 0.0, ty_a_flux = 0.0;
-  foreach_boundary (top,reduction(+:py_a_flux),reduction(+:tx_a_flux)
-		    reduction(+:ty_a_flux)) {
-    double pre_int = 0.5*(p[0,1,0]+p[]); // we interpolate to the face
-    py_a_flux += sq(Delta)*( -(pre_int) );  
-    tx_a_flux += sq(Delta)*mu2*(u.x[0,1,0]-u.x[])/Delta;  
-    ty_a_flux += sq(Delta)*mu2*(u.y[0,1,0]-u.y[])/Delta;  
-  }
-  double py_w_flux = 0.0, ty_w_flux = 0.0;
-  foreach_boundary (bottom,reduction(+:py_w_flux),reduction(+:ty_w_flux)) {
-    double pre_int = 0.5*(p[0,-1,0]+p[]); // we interpolate to the face
-    py_w_flux += sq(Delta)*( -(pre_int) );  
-    ty_w_flux += sq(Delta)*mu1*(u.x[]-u.x[0,-1,0])/Delta;  
-  }
-
-  if (pid() == 0) {
-  
-    fflush(stderr);
-    FILE * global_obs = fopen (fname, "a");
-    fprintf (global_obs, "%.10e %.10e %.10e %.10e %.10e %.10e %.10e %.10e %.10e %.10e %.10e %.10e %.10e %.10e %.10e %.10e %.10e %.10e %.10e %.10e %.10e %.10e %.10e %.10e %.10e %.10e %.10e %.10e %.10e %.10e %.10e %.10e %.10e %.10e %.10e\n", 
-                         t, 1.0*istep, area, eta_m, k_*sqrt(amp2), area_my, eta_my, k_*sqrt(amp2_my), pr_m,  
-			 mf_px, mf_py, mf_pz, 
-			 mp_px, mp_py, mp_pz, 
-			 mf_vx, mf_vy, mf_vz, 
-			 u_xi, u_yi, u_zi, 
-			 ef_pn, ef_pp,
-			 ef_fn, ef_fp,
-			 ef_vn, ef_vp,
-			 ep_gs, 
-			 pre_a_m, pre_w_m, 
-			 py_a_flux,tx_a_flux,ty_a_flux,py_w_flux,ty_w_flux);
-    fclose(global_obs);
 
   }
+  //return 1;
 
 }
 
-//event bulk_energy (t = RELEASETIME; t <= T0_*end_sim; t += T0_/tout_glo) {
-event bulk_energy (t = RELEASETIME; t <= T0_*end_sim; t += T0_/tout_glo_my) {
-//event bulk_energy (i += 2) {
+event bulk_budgets (t = RELEASETIME; t <= T0_*end_sim; t += T0_/tout_glo_my) {
+//event bulk_budgets (i += 2) {
 
   fprintf(stderr, "I output the bulk energy and dissipation every t=%.10e\n", T0_/tout_glo_my);
 
@@ -1111,19 +983,25 @@ event bulk_energy (t = RELEASETIME; t <= T0_*end_sim; t += T0_/tout_glo_my) {
   double keAir = 0., gpeAir = 0.;
   foreach(reduction(+:keWat),reduction(+:gpeWat) 
 	  reduction(+:keAir),reduction(+:gpeAir)) {
-    double norm2 = 0.;
+    double norm2_vel = 0.;
     foreach_dimension() {
-      norm2 += sq(u.x[]);
+      norm2_vel += sq(u.x[]);
     }
-    keWat  += rho1*norm2*(0.0+f[])*dv();
-    keAir  += rho2*norm2*(1.0-f[])*dv();
-    gpeWat += rho1*g_*y*(0.0+f[])*dv();
-    gpeAir += rho2*g_*y*(1.0-f[])*dv();
+    keWat  += rho1*norm2_vel*(0.0+f[])*dv();
+    keAir  += rho2*norm2_vel*(1.0-f[])*dv();
+    coord o = {x,y,z};
+    double norm2_gpe = 0.;
+    foreach_dimension() {
+      norm2_gpe += fabs(o.x*G.x);
+    }
+    gpeWat += rho1*norm2_gpe*(0.0+f[])*dv();
+    gpeAir += rho2*norm2_gpe*(1.0-f[])*dv();
   }
   double rates[2];
   dissipation_rate(mu1,mu2,u,rates);
   double dissWater = rates[0];
   double dissAir   = rates[1];
+  double gpe_base  = 0.5*sq(h_)*pow(L0,dimension-1)*g_;
   
   // --> Mean velocity (all three components) for both phases
   double vol_a_m = 0., vol_w_m = 0.;
@@ -1141,31 +1019,16 @@ event bulk_energy (t = RELEASETIME; t <= T0_*end_sim; t += T0_/tout_glo_my) {
   // --> Mean momentum (all three components)
   scalar phi_tmp[];
   curvature (f, phi_tmp);
-  coord mom_m = {0.,0.,0.}, sur_t = {0.,0.,0};
-  foreach(reduction(+:mom_m),reduction(+:sur_t)) {
+  coord mom_m = {0.,0.,0.}, vel_m = {0.,0.,0}, sur_t = {0.,0.,0.};
+  foreach(reduction(+:mom_m),reduction(+:vel_m),reduction(+:sur_t)) {
     foreach_dimension() {
       coord int_ft = {0.,0.,0};
       if(interfacial(point,f) && phi_tmp[] != nodata) {
         int_ft.x = phi_tmp[]*(f[1,0,0]-f[-1,0,0])/(2.*Delta);
       }
       mom_m.x += u.x[]*rho[]*dv();
+      vel_m.x += u.x[]*dv();
       sur_t.x += f.sigma*int_ft.x*dv(); 
-    }
-  }
-
-  // --> Pressure gradient integral, viscous term integral (air phase)
-  coord grap_a_int = {0.,0.,0.}, divu_a_int = {0.,0.,0.};
-  coord grap_w_int = {0.,0.,0.}, divu_w_int = {0.,0.,0.};
-  foreach(reduction(+:grap_a_int),reduction(+:divu_a_int)
-	  reduction(+:grap_w_int),reduction(+:divu_w_int)) {
-    foreach_dimension() {
-      double lap_u = (u.x[1,0,0]-2.0*u.x[]+u.x[-1,0,0] +
-                      u.x[0,1,0]-2.0*u.x[]+u.x[0,-1,0] +
-                      u.x[0,0,1]-2.0*u.x[]+u.x[0,0,-1])/sq(Delta);
-      grap_a_int.x += -(p[1,0,0]-p[-1,0,0])/(2.*Delta)*(1.0-f[])*dv();
-      divu_a_int.x += mu2*lap_u*(1.0-f[])*dv();
-      grap_w_int.x += -(p[1,0,0]-p[-1,0,0])/(2.*Delta)*(0.0+f[])*dv();
-      divu_w_int.x += mu1*lap_u*(0.0+f[])*dv();
     }
   }
 
@@ -1191,11 +1054,29 @@ event bulk_energy (t = RELEASETIME; t <= T0_*end_sim; t += T0_/tout_glo_my) {
     Syz[] = dvdz+dwdy;
   }
 
-  // --> Another version of the pressure term / viscous term integrals
+  // --> Pressure gradient integral, viscous term integral (air phase)
+  coord divc_a_int1 = {0.,0.,0.}, divc_w_int1 = {0.,0.,0.};
   coord grap_a_int1 = {0.,0.,0.}, grap_w_int1 = {0.,0.,0.};
   coord divu_a_int1 = {0.,0.,0.}, divu_w_int1 = {0.,0.,0.};
-  foreach(reduction(+:grap_a_int1),reduction(+:grap_w_int1),
+  foreach(reduction(+:divc_a_int1),reduction(+:divc_w_int1),
+          reduction(+:grap_a_int1),reduction(+:grap_w_int1),
 	  reduction(+:divu_a_int1),reduction(+:divu_w_int1)) {
+    double div_con = 0;
+    div_con = (u.x[1,0,0]*u.x[1,0,0]-u.x[-1,0,0]*u.x[-1,0,0])/(2.*Delta) +
+	      (u.x[0,1,0]*u.y[0,1,0]-u.x[0,-1,0]*u.y[0,-1,0])/(2.*Delta) +
+              (u.x[0,0,1]*u.z[0,0,1]-u.x[0,0,-1]*u.z[0,0,-1])/(2.*Delta);
+    divc_a_int1.x += div_con*(1.0-f[])*dv();
+    divc_w_int1.x += div_con*(0.0+f[])*dv();
+    div_con = (u.y[1,0,0]*u.x[1,0,0]-u.y[-1,0,0]*u.x[-1,0,0])/(2.*Delta) +
+	      (u.y[0,1,0]*u.y[0,1,0]-u.y[0,-1,0]*u.y[0,-1,0])/(2.*Delta) +
+              (u.y[0,0,1]*u.z[0,0,1]-u.y[0,0,-1]*u.z[0,0,-1])/(2.*Delta);
+    divc_a_int1.y += div_con*(1.0-f[])*dv();
+    divc_w_int1.y += div_con*(0.0+f[])*dv();
+    div_con = (u.z[1,0,0]*u.x[1,0,0]-u.z[-1,0,0]*u.x[-1,0,0])/(2.*Delta) +
+	      (u.z[0,1,0]*u.y[0,1,0]-u.z[0,-1,0]*u.y[0,-1,0])/(2.*Delta) +
+              (u.z[0,0,1]*u.z[0,0,1]-u.z[0,0,-1]*u.z[0,0,-1])/(2.*Delta);
+    divc_a_int1.z += div_con*(1.0-f[])*dv();
+    divc_w_int1.z += div_con*(0.0+f[])*dv();
     double div_pre = 0;
     div_pre = -(p[1,0,0]-p[-1,0,0])/(2.*Delta);
     grap_a_int1.x += div_pre*(1.0-f[])*dv();
@@ -1218,9 +1099,68 @@ event bulk_energy (t = RELEASETIME; t <= T0_*end_sim; t += T0_/tout_glo_my) {
     divu_w_int1.z += mu1*div_tau*(0.0+f[])*dv();
   }
 
+  // --> Mean velocity (all three components) for both phases
+  // using the shifted vof, i.e. f2, only for the gas phase
+  double vol_a_m2 = 0.;
+  coord vel_a_m2 = {0.,0.,0.};
+  foreach(reduction(+:vol_a_m2),reduction(+:vel_a_m2)) {
+    vol_a_m2 += (1.0-f2s[])*dv();
+    foreach_dimension() {
+      vel_a_m2.x += u.x[]*(1.0-f2s[])*dv(); 
+    }
+  }
+
+  // --> A second version of the pressure term / viscous term integrals
+  // only for the air phase using the shifted vof, i.e. f2
+  coord divc_a_int2 = {0.,0.,0.};
+  coord grap_a_int2 = {0.,0.,0.};
+  coord divu_a_int2 = {0.,0.,0.};
+  foreach(reduction(+:divc_a_int2),
+          reduction(+:grap_a_int2),
+	  reduction(+:divu_a_int2)) {
+    double div_con = 0;
+    div_con = (u.x[1,0,0]*u.x[1,0,0]-u.x[-1,0,0]*u.x[-1,0,0])/(2.*Delta) +
+	      (u.x[0,1,0]*u.y[0,1,0]-u.x[0,-1,0]*u.y[0,-1,0])/(2.*Delta) +
+              (u.x[0,0,1]*u.z[0,0,1]-u.x[0,0,-1]*u.z[0,0,-1])/(2.*Delta);
+    divc_a_int2.x += div_con*(1.0-f2s[])*dv();
+    div_con = (u.y[1,0,0]*u.x[1,0,0]-u.y[-1,0,0]*u.x[-1,0,0])/(2.*Delta) +
+	      (u.y[0,1,0]*u.y[0,1,0]-u.y[0,-1,0]*u.y[0,-1,0])/(2.*Delta) +
+              (u.y[0,0,1]*u.z[0,0,1]-u.y[0,0,-1]*u.z[0,0,-1])/(2.*Delta);
+    divc_a_int2.y += div_con*(1.0-f2s[])*dv();
+    div_con = (u.z[1,0,0]*u.x[1,0,0]-u.z[-1,0,0]*u.x[-1,0,0])/(2.*Delta) +
+	      (u.z[0,1,0]*u.y[0,1,0]-u.z[0,-1,0]*u.y[0,-1,0])/(2.*Delta) +
+              (u.z[0,0,1]*u.z[0,0,1]-u.z[0,0,-1]*u.z[0,0,-1])/(2.*Delta);
+    divc_a_int2.z += div_con*(1.0-f2s[])*dv();
+    double div_pre = 0;
+    div_pre = -(p[1,0,0]-p[-1,0,0])/(2.*Delta);
+    grap_a_int2.x += div_pre*(1.0-f2s[])*dv();
+    div_pre = -(p[0,1,0]-p[0,-1,0])/(2.*Delta);
+    grap_a_int2.y += div_pre*(1.0-f2s[])*dv();
+    div_pre = -(p[0,0,1]-p[0,0,-1])/(2.*Delta);
+    grap_a_int2.z += div_pre*(1.0-f2s[])*dv();
+    double div_tau = 0;
+    div_tau = (Sxx[1,0,0]-Sxx[-1,0,0]+Sxy[0,1,0]-Sxy[0,-1,0]+Sxz[0,0,1]-Sxz[0,0,-1])/(2.*Delta);
+    divu_a_int2.x += mu2*div_tau*(1.0-f2s[])*dv();
+    div_tau = (Sxy[1,0,0]-Sxy[-1,0,0]+Syy[0,1,0]-Syy[0,-1,0]+Syz[0,0,1]-Syz[0,0,-1])/(2.*Delta);
+    divu_a_int2.y += mu2*div_tau*(1.0-f2s[])*dv();
+    div_tau = (Sxz[1,0,0]-Sxz[-1,0,0]+Syz[0,1,0]-Syz[0,-1,0]+Szz[0,0,1]-Szz[0,0,-1])/(2.*Delta); 
+    divu_a_int2.z += mu2*div_tau*(1.0-f2s[])*dv();
+  }
+
+  // --> A third version of the pressure term only
+  // we use p_hd and f2s
+  coord grap_a_int3 = {0.,0.,0.};
+  foreach(reduction(+:grap_a_int3)) {
+    foreach_dimension() { 
+      double div_pre = -(p_hd[1,0,0]-p_hd[-1,0,0])/(2.*Delta);
+      grap_a_int3.x += div_pre*(1.0-f2s[])*dv();
+    }
+  }
+
   // --> Compute the power vector
   vector t_vel[];
   foreach() {
+    //
     double dudx = (u.x[1]     - u.x[-1]    )/(2.*Delta);
     double dudy = (u.x[0,1]   - u.x[0,-1]  )/(2.*Delta);
     double dudz = (u.x[0,0,1] - u.x[0,0,-1])/(2.*Delta);
@@ -1244,17 +1184,19 @@ event bulk_energy (t = RELEASETIME; t <= T0_*end_sim; t += T0_/tout_glo_my) {
     t_vel.z[] = SDeformzx*u.x[] + SDeformzy*u.y[] + SDeformzz*u.z[]; 
   }
 
-  // --> Pressure power integral, viscous power integral (per phase)
+  // --> Pressure power integral, viscous power integral (per phase and for both kinetic and gravitational forces)
   double grap_pa_int = 0., grap_pw_int = 0.;
   double taup_pa_int = 0., taup_pw_int = 0.;
   foreach(reduction(+:grap_pa_int),reduction(+:grap_pw_int)
 	  reduction(+:taup_pa_int),reduction(+:taup_pw_int)) {
     foreach_dimension() {
       double dpvel_dl = ( u.x[1,0,0]*p[1,0,0]-u.x[-1,0,0]*p[-1,0,0] )/(2.0*Delta);
-      grap_pa_int += -dpvel_dl*(1.0-f[])*dv();
+      //grap_pa_int += -dpvel_dl*(1.0-f[])*dv();
+      grap_pa_int += -dpvel_dl*(1.0-f2s[])*dv();
       grap_pw_int += -dpvel_dl*(0.0+f[])*dv();
       double dtvel_dl = ( t_vel.x[1,0,0]-t_vel.x[-1,0,0] )/(2.0*Delta);
-      taup_pa_int += mu2*dtvel_dl*(1.0-f[])*dv();
+      //taup_pa_int += mu2*dtvel_dl*(1.0-f[])*dv();
+      taup_pa_int += mu2*dtvel_dl*(1.0-f2s[])*dv();
       taup_pw_int += mu1*dtvel_dl*(0.0+f[])*dv();
     }
   }
@@ -1266,316 +1208,157 @@ event bulk_energy (t = RELEASETIME; t <= T0_*end_sim; t += T0_/tout_glo_my) {
     fflush(stderr);
     sprintf (name,"./budgets/mom_bud_x_tot.out");
     FILE * log_mtx = fopen(name,"a");
-    fprintf (log_mtx, "%.10e %.10e %.10e %.10e\n", t, 1.0*i, 
-		      mom_m.x, sur_t.x);
+    fprintf (log_mtx, "%8E %8E %8E %8E %8E %8E\n", t, 1.0*i, t-RELEASETIME,
+		      vel_m.x, mom_m.x, sur_t.x);
     fclose(log_mtx);
 
     fflush(stderr);
     sprintf (name,"./budgets/mom_bud_y_tot.out");
     FILE * log_mty = fopen(name,"a");
-    fprintf (log_mty, "%.10e %.10e %.10e %.10e\n", t, 1.0*i,  
-		      mom_m.y, sur_t.y);
+    fprintf (log_mty, "%8E %8E %8E %8E %8E %8E\n", t, 1.0*i, t-RELEASETIME,
+		      vel_m.y, mom_m.y, sur_t.y);
     fclose(log_mty);
     
     fflush(stderr);
     sprintf (name,"./budgets/mom_bud_z_tot.out");
     FILE * log_mtz = fopen(name,"a");
-    fprintf (log_mtz, "%.10e %.10e %.10e %.10e\n", t, 1.0*i, 
-		      mom_m.z, sur_t.z);
+    fprintf (log_mtz, "%8E %8E %8E %8E %8E %8E\n", t, 1.0*i, t-RELEASETIME,
+		      vel_m.z, mom_m.z, sur_t.z);
     fclose(log_mtz);
 
     fflush(stderr);
     sprintf (name,"./budgets/mom_bud_x_air.out");
     FILE * log_max = fopen(name,"a");
-    fprintf (log_max, "%.10e %.10e %.10e %.10e %.10e %.10e %.10e %.10e\n", t, 1.0*i, vol_a_m, 
-		      vel_a_m.x, grap_a_int.x, grap_a_int1.x, divu_a_int.x, divu_a_int1.x);
+    fprintf (log_max, "%8E %8E %8E %8E %8E %8E %8E %8E\n", t, 1.0*i, t-RELEASETIME,
+		      vol_a_m, vel_a_m.x, grap_a_int1.x, divu_a_int1.x, divc_a_int1.x);
     fclose(log_max);
 
     fflush(stderr);
     sprintf (name,"./budgets/mom_bud_y_air.out");
     FILE * log_may = fopen(name,"a");
-    fprintf (log_may, "%.10e %.10e %.10e %.10e %.10e %.10e %.10e %.10e\n", t, 1.0*i, vol_a_m, 
-		      vel_a_m.y, grap_a_int.y, grap_a_int1.y, divu_a_int.y, divu_a_int1.y);
+    fprintf (log_may, "%8E %8E %8E %8E %8E %8E %8E %8E\n", t, 1.0*i, t-RELEASETIME,
+		      vol_a_m, vel_a_m.y, grap_a_int1.y, divu_a_int1.y, divc_a_int1.y);
     fclose(log_may);
     
     fflush(stderr);
     sprintf (name,"./budgets/mom_bud_z_air.out");
     FILE * log_maz = fopen(name,"a");
-    fprintf (log_maz, "%.10e %.10e %.10e %.10e %.10e %.10e %.10e %.10e\n", t, 1.0*i, vol_a_m, 
-		      vel_a_m.z, grap_a_int.z, grap_a_int1.z, divu_a_int.z, divu_a_int1.z);
+    fprintf (log_maz, "%8E %8E %8E %8E %8E %8E %8E %8E\n", t, 1.0*i, t-RELEASETIME,
+		      vol_a_m, vel_a_m.z, grap_a_int1.z, divu_a_int1.z, divc_a_int1.z);
     fclose(log_maz);
+
+    fflush(stderr);
+    sprintf (name,"./budgets/mom_bud_x_air_f2.out");
+    FILE * log_max2 = fopen(name,"a");
+    fprintf (log_max2, "%8E %8E %8E %8E %8E %8E %8E %8E\n", t, 1.0*i, t-RELEASETIME,
+		       vol_a_m2, vel_a_m2.x, grap_a_int2.x, divu_a_int2.x, divc_a_int2.x);
+    fclose(log_max2);
+    
+    fflush(stderr);
+    sprintf (name,"./budgets/mom_bud_y_air_f2.out");
+    FILE * log_may2 = fopen(name,"a");
+    fprintf (log_may2, "%8E %8E %8E %8E %8E %8E %8E %8E\n", t, 1.0*i, t-RELEASETIME,
+		       vol_a_m2, vel_a_m2.y, grap_a_int2.y, divu_a_int2.y, divc_a_int2.y);
+    fclose(log_may2);
+
+    fflush(stderr);
+    sprintf (name,"./budgets/mom_bud_z_air_f2.out");
+    FILE * log_maz2 = fopen(name,"a");
+    fprintf (log_maz2, "%8E %8E %8E %8E %8E %8E %8E %8E\n", t, 1.0*i, t-RELEASETIME,
+		       vol_a_m2, vel_a_m2.z, grap_a_int2.z, divu_a_int2.z, divc_a_int2.z);
+    fclose(log_maz2);
+
+    fflush(stderr);
+    sprintf (name,"./budgets/mom_bud_x_air_f2_phd.out");
+    FILE * log_max3 = fopen(name,"a");
+    fprintf (log_max3, "%8E %8E %8E %8E %8E %8E %8E %8E\n", t, 1.0*i, t-RELEASETIME,
+		       vol_a_m2, vel_a_m2.x, grap_a_int3.x, divu_a_int2.x, divc_a_int2.x);
+    fclose(log_max3);
 
     fflush(stderr);
     sprintf (name,"./budgets/mom_bud_x_water.out");
     FILE * log_mwx = fopen(name,"a");
-    fprintf (log_mwx, "%.10e %.10e %.10e %.10e %.10e %.10e %.10e %.10e\n", t, 1.0*i, vol_w_m, 
-		      vel_w_m.x, grap_w_int.x, grap_w_int1.x, divu_w_int.x, divu_w_int1.x);
+    fprintf (log_mwx, "%8E %8E %8E %8E %8E %8E %8E %8E\n", t, 1.0*i, t-RELEASETIME,
+		      vol_w_m, vel_w_m.x, grap_w_int1.x, divu_w_int1.x, divc_w_int1.x);
     fclose(log_mwx);
 
     fflush(stderr);
     sprintf (name,"./budgets/mom_bud_y_water.out");
     FILE * log_mwy = fopen(name,"a");
-    fprintf (log_mwy, "%.10e %.10e %.10e %.10e %.10e %.10e %.10e %.10e\n", t, 1.0*i, vol_w_m, 
-		      vel_w_m.y, grap_w_int.y, grap_w_int1.y, divu_w_int.y, divu_w_int1.y);
+    fprintf (log_mwy, "%8E %8E %8E %8E %8E %8E %8E %8E\n", t, 1.0*i, t-RELEASETIME,
+		      vol_w_m, vel_w_m.y, grap_w_int1.y, divu_w_int1.y, divc_w_int1.y);
     fclose(log_mwy);
     
     fflush(stderr);
     sprintf (name,"./budgets/mom_bud_z_water.out");
     FILE * log_mwz = fopen(name,"a");
-    fprintf (log_mwz, "%.10e %.10e %.10e %.10e %.10e %.10e %.10e %.10e\n", t, 1.0*i, vol_w_m, 
-		      vel_w_m.z, grap_w_int.z, grap_w_int1.z, divu_w_int.z, divu_w_int1.z);
+    fprintf (log_mwz, "%8E %8E %8E %8E %8E %8E %8E %8E\n", t, 1.0*i, t-RELEASETIME,
+		      vol_w_m, vel_w_m.z, grap_w_int1.z, divu_w_int1.z, divc_w_int1.z);
     fclose(log_mwz);
+
+    fflush(stderr);
     sprintf (name,"./budgets/ke_bud_air.out");
     FILE * fpair = fopen(name,"a");
-    fprintf (fpair, "%.10e %.10e %.10e %.10e %.10e %.10e %.10e\n",
-             //t, 1.0*i, keAir/2., gpeAir + 0.125*L0*L0*L0, grap_pa_int, taup_pa_int, dissAir);
-             t, 1.0*i, keAir/2., gpeAir, grap_pa_int, taup_pa_int, dissAir);
+    fprintf (fpair, "%8E %8E %8E %8E %8E %8E %8E %8E\n", t, 1.0*i, t-RELEASETIME,
+		    keAir/2., gpeAir - rho2*gpe_base, grap_pa_int, taup_pa_int, dissAir);
     fclose(fpair);
 
     fflush(stderr);
     sprintf (name,"./budgets/ke_bud_water.out");
     FILE * fpwater = fopen(name,"a");
-    fprintf (fpwater, "%.10e %.10e %.10e %.10e %.10e %.10e %.10e\n",
-             //t, 1.0*i, keWat/2., gpeWat + 0.125*L0*L0*L0, grap_pw_int, taup_pw_int, dissWater);
-             t, 1.0*i, keWat/2., gpeWat, grap_pw_int, taup_pw_int, dissWater);
+    fprintf (fpwater, "%8E %8E %8E %8E %8E %8E %8E %8E\n", t, 1.0*i, t-RELEASETIME,
+		      keWat/2., gpeWat - rho1*gpe_base, grap_pw_int, taup_pw_int, dissWater); 
     fclose(fpwater);
     
   }
 
 }
 
-/**
-   We want to compute some quantities at the interface. */
+event tagging (t = RELEASETIME; t <= T0_*end_sim; t += T0_/tout_tag_my) {
+//event tagging (i += 2) {
 
-void output_int_qtn (char * fname, int istep, double time, scalar c, scalar p_a, double stp_eta) {
-
-  // We first loop over all the interfacial points 
-  // and we count them (per processor)
-  
-  int int_pt = 0;
-  foreach(serial) { 
-    if (interfacial (point, c)) {
-      if (point.level == MAXLEVEL) {
-        coord n = interface_normal(point, c), pp;
-        double alpha1 = plane_alpha (c[], n);
-        plane_area_center(n, alpha1, &pp);
-        double xc = x + Delta*pp.x;
-        double yc = y + Delta*pp.y + stp_eta;
-#if dimension > 2
-        double zc = z + Delta*pp.z; // we keep here to avoid warning (otherwise: unused variable)
-	Point point1 = locate (xc, yc, zc);
-#else
-	Point point1 = locate (xc, yc);
-#endif
-	if (point1.level > 0) {
-	  POINT_VARIABLES;
-	  int_pt++;
-	}
-      }
-    }
-  }
-
-  //int tot_column = 21;
-  int tot_column = 18;
-  double t_mat[int_pt][tot_column];
-
-  for (int j = 0; j < tot_column; j++) {
-    for (int i = 0; i < int_pt; i++) {
-      t_mat[i][j] = 0;
-    }
-  }
-  fprintf(stderr, "First pass over interfacial points\n");
-
-  scalar pos[];
-#if dimension > 2
-  coord G = {0.,1.,0.}, Z = {0.,0.,0.};
-#else
-  coord G = {0.,1.}, Z = {0.,0.};
-#endif
-  position (c, pos, G, Z);
-
-  scalar curv[];
-  curvature (c, curv);
-
-  // --> quantities to be probed at the interface
-  // n.b.: for the stress we can use u since it contains derivatives
-  scalar Sxx[]; scalar Syy[]; scalar Szz[];
-  scalar Sxy[]; scalar Sxz[]; scalar Syz[];
+  /*
+  scalar f2[];
+  scalar_clone (f2, f);
   foreach() {
-    double dudx = (u.x[1]     - u.x[-1]    )/(2.*Delta);
-    double dudy = (u.x[0,1]   - u.x[0,-1]  )/(2.*Delta);
-    double dudz = (u.x[0,0,1] - u.x[0,0,-1])/(2.*Delta);
-    double dvdx = (u.y[1]     - u.y[-1]    )/(2.*Delta);
-    double dvdy = (u.y[0,1]   - u.y[0,-1]  )/(2.*Delta);
-    double dvdz = (u.y[0,0,1] - u.y[0,0,-1])/(2.*Delta);
-    double dwdx = (u.z[1]     - u.z[-1]    )/(2.*Delta);
-    double dwdy = (u.z[0,1]   - u.z[0,-1]  )/(2.*Delta);
-    double dwdz = (u.z[0,0,1] - u.z[0,0,-1])/(2.*Delta);
-    Sxx[] = dudx+dudx; 
-    Syy[] = dvdy+dvdy;
-    Szz[] = dwdz+dwdz;
-    Sxy[] = dudy+dvdx;
-    Sxz[] = dudz+dwdx;
-    Syz[] = dvdz+dwdy;
+    f2[] = f[];
   }
-  boundary({Sxx,Syy,Szz,Sxy,Sxz,Syz}); // must be kept
-
-  int count = 0;
-  foreach(serial) {
-    if (interfacial (point, c)) {
-      if (point.level == MAXLEVEL) {
-        coord n = interface_normal(point, c), pp;
-        double alpha1 = plane_alpha (c[], n);
-        plane_area_center(n, alpha1, &pp);
-	double eta = pos[];
-	double cur = curv[];
-	double norm_2 = sqrt(sq(n.x) + sq(n.y) + sq(n.z));
-        double xc = x + Delta*pp.x;
-        double yc = y + Delta*pp.y + stp_eta;
-        double zc = z + Delta*pp.z;
-#if dimension > 2
-	Point point1 = locate (xc, yc, zc);
-#else
-	Point point1 = locate (xc, yc);
-#endif
-	if (point1.level > 0) {
-	 
-	  POINT_VARIABLES;
-
-	  t_mat[count][0]  = xc;
-#if dimension > 2
-	  t_mat[count][1]  = zc;
-#else
-	  t_mat[count][1]  = 0;
-#endif
-	  t_mat[count][2]  = my_interpolation(point, p_a, xc, yc, zc);
-	  t_mat[count][3]  = my_interpolation(point, Sxx, xc, yc, zc);
-	  t_mat[count][4]  = my_interpolation(point, Syy, xc, yc, zc);
-	  t_mat[count][5]  = my_interpolation(point, Szz, xc, yc, zc);
-	  t_mat[count][6]  = my_interpolation(point, Sxy, xc, yc, zc);
-	  t_mat[count][7]  = my_interpolation(point, Sxz, xc, yc, zc);
-	  t_mat[count][8]  = my_interpolation(point, Syz, xc, yc, zc);
-	  t_mat[count][9]  = my_interpolation(point, u.x, xc, yc, zc);
-	  t_mat[count][10] = my_interpolation(point, u.y, xc, yc, zc);
-#if dimension > 2
-	  t_mat[count][11] = my_interpolation(point, u.z, xc, yc, zc);
-#else
-	  t_mat[count][11] = 0;
+#if TREE
+  f2.refine = f2.prolongation = fraction_refine;
+  restriction({f2});
 #endif
 
-	  t_mat[count][12] = eta;           // already defined at the interface
-	  t_mat[count][13] = cur;           // already defined at the interface
-	  t_mat[count][14] = n.x/norm_2;    // already defined at the interface
-	  t_mat[count][15] = n.y/norm_2;    // already defined at the interface
-	  t_mat[count][16] = n.z/norm_2;    // already defined at the interface
-	  t_mat[count][17] = Delta;         // no interpolation is meaningful
-	  count++;
-
-	}
-      }
-    }
+  if(do_remove) {
+    remove_droplets (f2,min_size,threshold,false); // first remove droplets
+    remove_droplets (f2,min_size,threshold,true);  // then remove bubbles
   }
-  fprintf(stderr, "Second pass over interfacial points\n");
+  */
 
-  // We sort locally t_mat by the x coordinate (the first, i.e. 0-th, column) 
+  fprintf(stderr, "I output the tagging every t=%.10e\n", T0_/tout_tag_my);
 
-  qsort(t_mat, int_pt, tot_column*sizeof(double), compare);
-  fprintf(stderr, "First sort\n");
+  if(do_tagging == 1) {
 
-#if _MPI
-
-  // On multiple cores, we gather all the int_pt to the root pid 
-  // and, then, we broadcast this information to all the processes
-  
-  int nproc;
-  MPI_Comm_size (MPI_COMM_WORLD, &nproc);
-  int counts_it[nproc];
-  if( pid() == 0 ) {
-    MPI_Gather(&int_pt,1,MPI_INT,counts_it,1,MPI_INT,0,MPI_COMM_WORLD); // MPI_gather gathers by rank order
-  }
-  else {
-    MPI_Gather(&int_pt,1,MPI_INT,NULL     ,1,MPI_INT,0,MPI_COMM_WORLD); // MPI_gather gathers by rank order
-  }
-  MPI_Bcast(counts_it,nproc,MPI_INT,0,MPI_COMM_WORLD);
-
-  // Each processor knows the int_pt of the others. So we can compute 
-  // the displacement, the total number of interfacial points and 
-  // the number of elements owned by each processor
-
-  int tot_int_pt = 0;
-  int tot_el_p[nproc], disp_r[nproc], disp[nproc];
-  for (int i = 0; i < nproc; i++) {
-    disp_r[i]    = tot_int_pt;
-    disp[i]      = disp_r[i]*tot_column;
-    tot_int_pt  += counts_it[i];
-    tot_el_p[i]  = counts_it[i]*tot_column;
-  }
-
-  // --> Gather to the root pid 
-  // --> Sort by the first column
-
-  double t_mat_tot[tot_int_pt][tot_column];
-
-  if( pid() == 0 ) {
-    int tot_el_p0[nproc], disp0[nproc];
-    for (int i = 0; i < nproc; i++) {
-      tot_el_p0[i] = tot_el_p[i];
-      disp0[i]     = disp[i];
-    }
-    MPI_Gatherv(&t_mat,int_pt*tot_column,MPI_DOUBLE,t_mat_tot,tot_el_p0,disp0,MPI_DOUBLE,0,MPI_COMM_WORLD);
-    fprintf(stderr, "GatherV 0\n");
-    qsort(t_mat_tot, tot_int_pt, tot_column*sizeof(double), compare);
-    fprintf(stderr, "Second sort 0\n");
-  }
-  else {
-    int tot_el_p1[nproc], disp1[nproc];
-    for (int i = 0; i < nproc; i++) {
-      tot_el_p1[i] = tot_el_p[i];
-      disp1[i]     = disp[i];
-    }
-    MPI_Gatherv(&t_mat,int_pt*tot_column,MPI_DOUBLE,NULL     ,tot_el_p1,disp1,MPI_DOUBLE,0,MPI_COMM_WORLD);
-  }
- 
-#else
- 
-  int tot_int_pt = int_pt;
-  double t_mat_tot[tot_int_pt][tot_column];
-  for (int j = 0; j < tot_column; j++) {
-    for (int i = 0; i < int_pt; i++) {
-      t_mat_tot[i][j] = t_mat[i][j];
-    }
-  }
-
-#endif
-
-  if (pid() == 0) {
+    char name_1[100], name_2[100], name_3[100];
     
-    fflush(stderr);
-
-    // Print in binary format
-    FILE * fpver = fopen (fname,"w");
-    for (int i = 0; i < tot_int_pt; i++) {
-      for (int j = 0; j < tot_column; j++) {
-	fwrite ( &t_mat_tot[i][j], sizeof(double), 1, fpver );
-      }
-    }
-    fclose(fpver);
-    fflush(fpver);
-
-    // Log some info about the binary
-    char name_1[100];
-    sprintf (name_1, "./eta/global_int.out");
-    FILE * global_int = fopen (name_1, "a");
-    fprintf (global_int, "%.10e %09d %09d %09d\n", 
-		          time, istep, tot_int_pt, tot_column);
-    fclose(global_int);
+    fprintf(stderr, "I do f1-tagging every t=%.10e\n", T0_/tout_glo_my);
+    sprintf (name_1, "./tagging/num_bubbles_droplets_f1.out");
+    sprintf (name_2, "./tagging/tagging_f1/droplets_f1_%09d.out", i);
+    sprintf (name_3, "./tagging/tagging_f1/bubbles_f1_%09d.out", i);
+    countDropsBubble (name_1, name_2, name_3, t, RELEASETIME, i, f);
+ 
+    /*   
+    fprintf(stderr, "I do f2-tagging every t=%.10e\n", T0_/tout_glo_my);
+    sprintf (name_1, "./tagging/num_bubbles_droplets_f2.out");
+    sprintf (name_2, "./tagging/tagging_f2/droplets_f2_%09d.out", i);
+    sprintf (name_3, "./tagging/tagging_f2/bubbles_f2_%09d.out", i);
+    countDropsBubble (name_1, name_2, name_3, t, RELEASETIME, i, f2);
+    */
 
   }
-  fprintf(stderr, "Print\n");
-
+  //return 1;
+  
 }
 
-//event global_obs (t = RELEASETIME; t <= T0_*end_sim; t += T0_/tout_glo_my) {
 event global_obs (t = RELEASETIME; t <= T0_*end_sim; t += T0_/tout_glo_my) {
 //event global_obs (i += 2) {
 
@@ -1598,130 +1381,45 @@ event global_obs (t = RELEASETIME; t <= T0_*end_sim; t += T0_/tout_glo_my) {
 
   char name_0[100];
 
-  // Note: 
-  // --> we need a constant offset to ensure we can preserve 
-  //     the same interface geometry
-  // --> we need to a have a stp_eta = 0/1/2/4*Delta to ensure 
-  //     the velocity gradients for the viscous contributions to the stress 
-  //     are properly computed in the air side only
-
-  double stp_eta_0 = 0.0*(L0/pow(2.0,MAXLEVEL)); // it corresponds to 0*Delta 
-  fprintf(stderr, "stp_eta0 for gl. obs. = %.10e\n", stp_eta_0);
+  double stp_eta_0 = 0.0; // it corresponds to 0*Delta 
+  double stp_pos_0 = 0.0; // it corresponds to 0*Delta 
+  fprintf(stderr, "stp_eta0 for gl. obs. = %.10e\n", stp_pos_0);
   sprintf (name_0, "./budgets/global_obs_ptot_0.out");
-  output_global_obs_1 (name_0, i, f2, p  , stp_eta_0);
+  output_global_obs_1 (name_0, i, MAXLEVEL, t, RELEASETIME, eta_m0, cirp_th, k_,
+		       f2 , p, stp_eta_0, stp_pos_0);
 
-  double stp_eta_1 = 1.0*(L0/pow(2.0,MAXLEVEL)); // it corresponds to 1*Delta 
-  fprintf(stderr, "stp_eta1 for gl. obs. = %.10e\n", stp_eta_1);
+  double stp_eta_1 = 0.0; // it corresponds to 4*Delta 
+  double stp_pos_1 = my_stp_eta_f2s; // it corresponds to 4*Delta 
+  fprintf(stderr, "stp_eta1 for gl. obs. = %.10e\n", stp_pos_1);
   sprintf (name_0, "./budgets/global_obs_ptot_1.out");
-  output_global_obs_1 (name_0, i, f2, p  , stp_eta_1);
-
-  double stp_eta_2 = 2.0*(L0/pow(2.0,MAXLEVEL)); // it corresponds to 2*Delta
-  fprintf(stderr, "stp_eta2 for gl. obs. = %.10e\n", stp_eta_2);
-  sprintf (name_0, "./budgets/global_obs_ptot_2.out");
-  output_global_obs_1 (name_0, i, f2, p  , stp_eta_2);
-  
-  double stp_eta_3 = 4.0*(L0/pow(2.0,MAXLEVEL)); // it corresponds to 4*Delta
-  fprintf(stderr, "stp_eta3 for gl. obs. = %.10e\n", stp_eta_3);
-  sprintf (name_0, "./budgets/global_obs_ptot_3.out");
-  output_global_obs_1 (name_0, i, f2, p  , stp_eta_3);
-
-  // We do tagging
-  if(do_tagging == 1) {
-    char name_1[100], name_2[100], name_3[100];
-    
-    fprintf(stderr, "I do f1-tagging every t=%.10e\n", T0_/tout_glo_my);
-    sprintf (name_1, "./tagging/num_bubbles_droplets_f1.out");
-    sprintf (name_2, "./tagging/tagging_f1/droplets_f1_%09d.out", i);
-    sprintf (name_3, "./tagging/tagging_f1/bubbles_f1_%09d.out", i);
-    countDropsBubble (name_1, name_2, name_3, t, RELEASETIME, i, f);
-    
-    fprintf(stderr, "I do f2-tagging every t=%.10e\n", T0_/tout_glo_my);
-    sprintf (name_1, "./tagging/num_bubbles_droplets_f2.out");
-    sprintf (name_2, "./tagging/tagging_f2/droplets_f2_%09d.out", i);
-    sprintf (name_3, "./tagging/tagging_f2/bubbles_f2_%09d.out", i);
-    countDropsBubble (name_1, name_2, name_3, t, RELEASETIME, i, f2);
-  }
-  
-  /*
-  // We shift f2 of my_stp_eta (we do at the end to avoid to pollute something)
-  face vector uuf[]; coord ufv = {0, 1, 0};
-  foreach_face()
-    uuf.x[] = ufv.x;
-
-  double dt2 = 0.25*CFL*L0/(1 << grid->maxdepth);
-  double yp = 0, my_stp_eta = 4.0*(L0/pow(2.0,MAXLEVEL)); // it corresponds to 4*Delta
-  int ps_i = 0;
-  while (yp < my_stp_eta) {
-    vof_advection2 (f2, dt2, uuf, i);
-    yp += dt2*ufv.y;
-    ps_i++;
-    fprintf(stderr, "translation of the VoF along y%d\n", ps_i);
-  }
-
-  double stp_eta_0s = 0.0; // it corresponds to 0*Delta
-  fprintf(stderr, "stp_eta0s for gl. obs. = %.10e\n", stp_eta_0s);
-  sprintf (name_0, "./budgets/global_obs_ptot_0s.out");
-  output_global_obs_1 (name_0, i, f2, p  , stp_eta_0s);
-  */
+  output_global_obs_1 (name_0, i, MAXLEVEL, t, RELEASETIME, eta_m0, cirp_th, k_, 
+		       f2s, p, stp_eta_1, stp_pos_1);
 
 }
 
-//event eta_loc (t = RELEASETIME; t <= T0_*end_sim; t += T0_/tout_eta) {
 event eta_loc (t = RELEASETIME; t <= T0_*end_sim; t += T0_/tout_eta_my) {
 //event eta_loc (i += 2) {
 
   if (do_eta_loc == 1) {
 
-    //fprintf(stderr, "I output the eta_loc file every t=%.10e\n", T0_/tout_eta);
     fprintf(stderr, "I output the eta_loc file every t=%.10e\n", T0_/tout_eta_my);
    
-    /*
-    scalar f2[];
-    scalar_clone (f2, f);
-    foreach() {
-      f2[] = f[];
-    }
-    f2.refine = f2.prolongation = fraction_refine;
-    restriction({f2});
-  
-    if(do_remove) {
-      //remove_droplets_all (f2,threshold,false); // first remove droplets
-      //remove_droplets_all (f2,threshold,true);  // then remove bubbles
-      remove_droplets (f2,min_size,threshold,false); // first remove droplets
-      remove_droplets (f2,min_size,threshold,true);  // then remove bubbles
-    }
-
-    face vector uuf[]; coord ufv = {0, 1, 0};
-    foreach_face()
-      uuf.x[] = ufv.x;
-    
-    scalar f2[];
-    scalar_clone (f2, f);
-    foreach() {
-      f2[] = f[];
-    }
-#if TREE
-    f2.refine = f2.prolongation = fraction_refine;
-    restriction({f2});
-#endif
-
-    double dt2 = 0.25*CFL*L0/(1 << grid->maxdepth);
-    double yp = 0, my_stp_eta = 4.0*(L0/pow(2.0,MAXLEVEL)); // it corresponds to 4*Delta
-    int ps_i = 0;
-    while (yp < my_stp_eta) {
-      vof_advection2 (f2, dt2, uuf, i);
-      yp += dt2*ufv.y;
-      ps_i++;
-      fprintf(stderr, "translation of the VoF along y%d\n", ps_i);
-    }
-    */
-
     fflush(stderr);
     char eta_out[100];
     sprintf (eta_out, "./eta/eta_loc/eta_loc_t%09d.bin", i);
-    //sprintf (eta_out, "./eta/eta_loc/eta_loc_t%.10e.bin", t);
-    double stp_eta = 4.0*(L0/pow(2.0,MAXLEVEL)); // it corresponds to 4*Delta
-    output_int_qtn (eta_out, i, t, f, p, stp_eta);
+
+    ///*
+    double stp_eta = 0.0;
+    double stp_pos = my_stp_eta_f2s; // it corresponds to 4*Delta on 1024**3
+    output_int_qtn (eta_out, i, MAXLEVEL, t, RELEASETIME, f2s, u, p, stp_eta, stp_pos);
+    //*/
+
+    /* 
+    // To revert back and uncomment point.level == MAXLEVEL
+    double stp_eta = my_stp_eta_f2s; // it corresponds to 4*Delta on 1024**3
+    double stp_pos = 0.0; // it corresponds to 0*Delta
+    output_int_qtn (eta_out, i, MAXLEVEL, t, RELEASETIME, f, u, p, stp_eta, stp_pos);
+    */
  
   }
 
@@ -1730,10 +1428,9 @@ event eta_loc (t = RELEASETIME; t <= T0_*end_sim; t += T0_/tout_eta_my) {
 /** 
    Dump every tout_res period */
 
-//event dumpstep (t = RELEASETIME; t <= T0_*end_sim; t += T0_/tout_res) {
 event dumpstep (t = RELEASETIME; t <= T0_*end_sim; t += T0_/tout_res_my) {
+//event dumpstep (i += 2) {
 
-  //fprintf(stderr, "I output the restarting files every t=%.10e\n", T0_/tout_res), fflush (stderr);
   fprintf(stderr, "I output the restarting files every t=%.10e\n", T0_/tout_res_my), fflush (stderr);
   
   if(counter < counter_max) {
@@ -1744,12 +1441,8 @@ event dumpstep (t = RELEASETIME; t <= T0_*end_sim; t += T0_/tout_res_my) {
   }
 
   char dname[100];
-  u_water.x.nodump = true;
-  u_water.y.nodump = true;
-  u_water.z.nodump = true;
   sprintf (dname, "dump_%d.bin", counter);
   dump (dname);
-  //dump (dname, {f,u.x,u.y,u.z,g.x,g.y,g.z,rhov});
 
   /** 
      Add a symbolic link, log restarting info and size of the bin */
@@ -1772,27 +1465,41 @@ event dumpstep (t = RELEASETIME; t <= T0_*end_sim; t += T0_/tout_res_my) {
     char name_1[80];
     sprintf (name_1,"log_restart.out");
     FILE * log_sim = fopen(name_1,"a");
-    fprintf (log_sim, "%.10e %.10e %.10e %.10e\n", t, 1.0*i, 1.0*counter, 1.0*res);
+    fprintf (log_sim, "%.10e %.10e %.10e %.10e %.10e\n", t, 1.0*i, t-RELEASETIME, 1.0*counter, 1.0*res);
     fclose(log_sim);
 
   }
 
 }
 
-//event dump_backup (t = RELEASETIME; t <= T0_*end_sim; t += T0_/tout_rbk) {
 event dump_backup (t = RELEASETIME; t <= T0_*end_sim; t += T0_/tout_rbk_my) {
 //event dump_backup (i += 2) {
  
-  //fprintf(stderr, "I output the restarting for backup files every t=%.10e\n", T0_/tout_rbk), fflush (stderr);
   fprintf(stderr, "I output the restarting files for backup every t=%.10e\n", T0_/tout_rbk_my), fflush (stderr);
   
   char dname[100];
-  u_water.x.nodump = true;
-  u_water.y.nodump = true;
-  u_water.z.nodump = true;
   sprintf (dname, "./restart_bk/dump_%09d.bin", i);
   dump (dname);
-  //dump (dname, {f,u.x,u.y,u.z,g.x,g.y,g.z,rhov});
+  
+  /** 
+     Log restarting info and size of the bin */
+
+  if (pid () == 0) {
+
+    fflush(stderr);
+    FILE * fp = fopen(dname, "r");
+    fseek(fp, 0L, SEEK_END);
+    long int res = ftell(fp);
+    fclose(fp);
+    
+    fflush(stderr);
+    char name_1[80];
+    sprintf (name_1,"./restart_bk/log_restart_bk.out");
+    FILE * log_sim = fopen(name_1,"a");
+    fprintf (log_sim, "%.10e %.10e %.10e %.10e\n", t, 1.0*i, t-RELEASETIME, 1.0*res);
+    fclose(log_sim);
+
+  }
 
 }
 
@@ -1803,7 +1510,6 @@ event dump_backup (t = RELEASETIME; t <= T0_*end_sim; t += T0_/tout_rbk_my) {
 
 event end (t = end_sim*T0_) {
 
-  fprintf (fout, "i = %d t = %.10e\n", i, t); fflush(fout);
   dump ("end.bin");
 
   if ( pid() == 0 ) {
@@ -1819,20 +1525,12 @@ event end (t = end_sim*T0_) {
 }
 
 /** 
-   Adaptive function. uemax is tuned to be 0.3Ustar in most cases. We need a more strict criteria for water speed once the waves starts moving, i.e. t >= RELEASETIME. */ 
+   Adaptive function. We need a more strict criteria for water speed once the waves starts moving, i.e. t >= RELEASETIME. */ 
    
 #if TREE
 event adapt (i++) {
 
-  /*
-  if (i == 5) {
-    fprintf(stderr, "uemaxRATIO = %.10e\n", uemaxRATIO);
-  }
-  */
-
   if (t < RELEASETIME) {
-    //adapt_wavelet ({f,u}, (double[]){femax,uemax,uemax,uemax}, MAXLEVEL);
-    //adapt_wavelet ({f,u}, (double[]){femax,uemax,uemax,uemax}, MAXLEVEL, 5);
     adapt_wavelet ({f,u}, (double[]){femax,uemax,uemax,uemax}, MAXLEVEL, MINLEVEL);
   }
 
@@ -1841,7 +1539,6 @@ event adapt (i++) {
       foreach_dimension ()
 	u_water.x[] = u.x[]*f[];
     }
-    //adapt_wavelet ({f,u,u_water}, (double[]){femax,uemax,uemax,uemax,uwemax,uwemax,uwemax}, MAXLEVEL);
     adapt_wavelet ({f,u,u_water}, (double[]){femax,uemax,uemax,uemax,uwemax,uwemax,uwemax}, MAXLEVEL, MINLEVEL);
   }
 
