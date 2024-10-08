@@ -41,10 +41,6 @@ struct ob_av {
   face vector cs; // Corresponding face fraction field (optional)
 };
 
-#if EMBED
-double embed_interpolate2 (Point point, scalar s, coord p); //prototype
-#endif
-
 double interface_average (struct ob_av oa){
   double area = 0, gs = 0;
   int j = 0, g = 0, m = list_len (oa.list);
@@ -68,13 +64,21 @@ double interface_average (struct ob_av oa){
 	ar *= Delta;
       area += ar;
       int g = 0;
-      for (scalar s in oa.list) {
-#if !EMBED
-	data[g++] += ar*interpolate(s, x + Delta*p->x,
-				    y + Delta*p->y, z + Delta*p->z);
+#if dimension > 2
+      coord pc = {x + Delta*p->x, y + Delta*p->y, z + Delta*p->z};
 #else
-	data[g++] += ar*embed_interpolate2 (point, s, p[0]);
+      coord pc = {x + Delta*p->x, y + Delta*p->y, 0.0};
 #endif
+      //Point point1 = locate (pc.x, pc.y, pc.z);
+      /*
+      if (point1.level > 0) {
+        for (scalar s in oa.list) {
+          data[g++] += ar*my_interpolation(point, s, pc.x, pc.y, pc.z);
+        }
+      }
+      */
+      for (scalar s in oa.list) {
+        data[g++] += ar*interpolate_linear(point, s, pc.x, pc.y, pc.z);
       }
     }
   }
@@ -242,54 +246,3 @@ And for equidistant profiles use `profile_equi()`:
     char * str = #fun;					\
     profiles (list, phi, fname, n = nr, func_str = str);	\
   } while(0);
-/**
-## Embedded boundary
-
-A 3D-compatible interpolate near an embedded boundary
-*/
-#if EMBED
-double embed_interpolate2 (Point point, scalar s, coord p) {
-  int i = sign(p.x), j = sign(p.y);
-#if dimension == 2
-  if (cs[i] && cs[0,j] && cs[i,j])
-    // bilinear interpolation when all neighbors are defined
-    return ((s[]*(1. - fabs(p.x)) + s[i]*fabs(p.x))*(1. - fabs(p.y)) + 
-	    (s[0,j]*(1. - fabs(p.x)) + s[i,j]*fabs(p.x))*fabs(p.y));
-#else //dimension == 3, see cartesian-common.h
-  int k = sign(p.z);
-  x = fabs(p.x); y = fabs(p.y); z = fabs(p.z);
-  /* trilinear interpolation */
-  if (cs[i] && cs[0,j] && cs[i,j] && cs[0,0,k] &&
-      cs[i,0,k] && cs[0,j,k] && cs[i,j,k]) {
-    return (((s[]*(1. - x) + s[i]*x)*(1. - y) + 
-	     (s[0,j]*(1. - x) + s[i,j]*x)*y)*(1. - z) +
-	    ((s[0,0,k]*(1. - x) + s[i,0,k]*x)*(1. - y) + 
-	     (s[0,j,k]*(1. - x) + s[i,j,k]*x)*y)*z);
-  }
-#endif
-  else {
-    // linear interpolation with gradients biased toward the
-    // cells which are defined
-    double val = s[];
-    foreach_dimension() {
-      int i = sign(p.x);
-      if (cs[i])
-	val += fabs(p.x)*(s[i] - s[]);
-      else if (cs[-i])
-	val += fabs(p.x)*(s[] - s[-i]);
-    }
-    return val;
-  }
-}
-#endif
-/**
-## Exemplifying test
-
-* [A test to set an example](test6.c)
-
-## Usage
-
-* [Unstable flow around an island](kizner2.c)
-* [Flow over a topography](ABL/example_rough.c)
- */
-
