@@ -285,7 +285,8 @@ double WaveProfile (double x, double y) {
    Note:
    --> the analytical expression of u_x and u_y 
        are consistent with a third-order Stokes wave. 
-   --> we added a correction for g_ to account for surface tension. */
+   --> we added a correction for g_ to account for surface tension effects
+       (this correction is negligible for large Bo) */
 
 double u_x (double x, double y) {
 
