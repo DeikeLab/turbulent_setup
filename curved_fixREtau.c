@@ -17,41 +17,39 @@
 /** 
    Input parameters of the simulations. */
 
-double RE_tau;      // Friction Reynolds number
-double BO;          // Bond number
-double RE_wave;     // RE_wave
-double UstarRATIO;  // Ratio between the friction velocity and the wave characteristic velocity
-double ak;          // initial wave steepness (relevant for st_wave == 1)
-int MAXLEVEL;       // max level of the simulation
-int MINLEVEL;       // min level of the simulation
-double RELEASETIME; // physical time before which the precursor simulation should be run
-double uemaxRATIO;  // ratio to control the maximum error on the water velocity
-double end_sim;     // end of the simulation (physical time unit)
-int do_eta_loc;     // output or not eta_loc
-int do_profile;     // output or not profiles
-int do_fields;      // output or not fields
-int do_tagging;     // output or not tagging
-double tout_eta;    // output frequency of interfacial quantity
-double tout_slc;    // output frequency of slices
-double tout_pro;    // output frequency of 1d profile
-double tout_res;    // output frequency of restart
-double tout_mov;    // output frequency of the movie
-int prt_res;        // printing resolution
-int from_pr;        // from precursor simulation
-int st_wave;        // initialize with a Stokes Wave (1) or import a prescribed distribution
-//int RANDOM;         // random number (already defined in spectrum.h)
+double Re_ast = 720;                   // Friction Reynolds number
+double BO = 200;                       // Bond number
+double Re_wave = 2.55e4;               // Wave Reynolds number
+double UstarRATIO = 0.5;               // Friction velocity over wave speed
+double ak = 0.3;                       // initial steepness
+double r_L0lam = 4.0;                  // ratio between the box size and one wavelength
+double rho_r = 1.225/1000.0;           // reference density (air)
+double mu_r  = 2.2471881948940954e-06; // reference dynamic viscosity (air)
+int MAXLEVEL = 10;                     // max level of the simulation
+int MINLEVEL = 6;                      // min level of the simulation
+double RELEASETIME = 1000;             // physical time before which the precursor simulation should be run
+double uemaxRATIO = 0.3;               // Ratio to control the maximum error on the air velocity
+double end_sim = 1000;                 // end of the simulation (physical time unit)
+int do_eta_loc = 1;                    // output or not eta_loc
+int do_profile = 1;                    // output or not profiles
+int do_fields  = 1;                    // output or not fields
+int do_tagging = 1;                    // output or not tagging
+int prt_res = 9;                       // printing resolution
+int from_pr = 1;                       // from precursor simulation
+int st_wave = 1;                       // initialize with a Stokes Wave (1) or import a prescribed distribution
+//int RANDOM;                          // random number (already defined in spectrum.h)
 
 /**
-   We define these values: wave number, fluid depth, wave period, 
-   gravitational acceleration, friction velocity, wave speed and 
-   water viscosity alteration. */
+   We define these values: the wave number, fluid depth, wave period, gravity acceleration,
+   the wave speed, the friction velocity, the wavelength, alter_MU. */
 
 double k_  = 1.0; // we change later 
 double h_  = 1.0; // we change later 
 double T0_ = 1.0; // we change later
 double g_  = 1.0; // we change later
+double c_  = 1.0; // we change later
 double Ustar = 1.0; // we change later
-double c_ = 1.0; // we change later
+double lam_ = 1.0; // we change later
 double alter_MU = 1.0; // we change later
 
 /**
@@ -74,15 +72,15 @@ double eta_m0    = 1.0;    // initial mean eta0
 /**
    Define some output frequencies. */
 
-double tout_glo_my = 128.0; // output frequency of global observables (don't go beyond otherwise it does not print)
+double tout_glo_my = 64.0; // output frequency of global observables (don't go beyond otherwise it does not print)
 double tout_tag_my = 64.00; // output frequency of tagging
 double tout_eta_my = 32.00; // output frequency of interfacial quantity
 double tout_slc_my = 32.00; // output frequency of slices
-double tout_pro_my = 16.00; // output frequency of 1d profile
-double tout_mov_my = 12.00; // output frequency of the movie
-double tout_cut_my = 8.00;  // output frequency of some 2D cuts
-double tout_res_my = 4.00;  // output frequency of restart
-double tout_rbk_my = 1.00;  // output frequency of the backup restarting files
+double tout_pro_my = 32.00; // output frequency of 1d profile
+double tout_mov_my = 4.00;  // output frequency of the movie
+double tout_cut_my = 4.00;  // output frequency of some 2D cuts
+double tout_res_my = 2.00;  // output frequency of restart
+double tout_rbk_my = 2.00;  // output frequency of the backup restarting files
 
 /**
    For the restarting step. */
@@ -127,55 +125,51 @@ int main(int argc, char *argv[]) {
   maxruntime (&argc, argv);
 
   if (argc > 1)
-    RE_tau  = atof(argv[1]);
+    Re_ast  = atof(argv[1]);
   if (argc > 2)
     BO = atof(argv[2]);
   if (argc > 3)
-    RE_wave = atof(argv[3]);
+    Re_wave = atof(argv[3]);
   if (argc > 4)
     UstarRATIO = atof(argv[4]);
   if (argc > 5)
     ak = atof(argv[5]);
   if (argc > 6)
-    MAXLEVEL = atoi(argv[6]);
+    r_L0lam = atof(argv[6]);
   if (argc > 7)
-    MINLEVEL = atoi(argv[7]);
+    rho_r = atof(argv[7]);
   if (argc > 8)
-    RELEASETIME = atof(argv[8]);
+    mu_r = atof(argv[8]);
   if (argc > 9)
-    uemaxRATIO = atof(argv[9]);
+    MAXLEVEL = atoi(argv[9]);
   if (argc > 10)
-    end_sim  = atof(argv[10]);
+    MINLEVEL = atoi(argv[10]);
   if (argc > 11)
-    do_eta_loc = atoi(argv[11]); // do_eta_loc = 1 --> true, else --> false
+    RELEASETIME = atof(argv[11]);
   if (argc > 12)
-    do_profile = atoi(argv[12]); // do_profile = 1 --> true, else --> false
+    uemaxRATIO = atof(argv[12]);
   if (argc > 13)
-    do_fields  = atoi(argv[13]); // do_fields  = 1 --> true, else --> false
+    end_sim  = atof(argv[13]);
   if (argc > 14)
-    do_tagging = atoi(argv[14]); // do_tagging = 1 --> true, else --> false
+    do_eta_loc = atoi(argv[14]); // do_eta_loc = 1 --> true, else --> false
   if (argc > 15)
-    tout_eta   = atof(argv[15]); 
+    do_profile = atoi(argv[15]); // do_profile = 1 --> true, else --> false
   if (argc > 16)
-    tout_slc   = atof(argv[16]); 
+    do_fields  = atoi(argv[16]); // do_fields  = 1 --> true, else --> false
   if (argc > 17)
-    tout_pro   = atof(argv[17]); 
+    do_tagging = atoi(argv[17]); // do_tagging = 1 --> true, else --> false
   if (argc > 18)
-    tout_res   = atof(argv[18]); 
+    prt_res    = atoi(argv[18]);
   if (argc > 19)
-    tout_mov   = atof(argv[19]); 
+    from_pr    = atoi(argv[19]);
   if (argc > 20)
-    prt_res    = atoi(argv[20]); 
+    st_wave    = atoi(argv[20]);
   if (argc > 21)
-    from_pr    = atoi(argv[21]);
-  if (argc > 22)
-    st_wave    = atoi(argv[22]);
-  if (argc > 23)
-    RANDOM     = atoi(argv[23]);
+    RANDOM     = atoi(argv[21]);
   
-  if (argc < 24) {
+  if (argc < 22) {
 
-    fprintf(ferr, "Lack of command line arguments. Check! Need %d more arguments\n", 23-argc);
+    fprintf(ferr, "Lack of command line arguments. Check! Need %d more arguments\n", 22-argc);
     return 1;
 
   }
@@ -183,11 +177,14 @@ int main(int argc, char *argv[]) {
   fprintf(stderr, "************************\n"), fflush (stderr);
   fprintf(stderr, "maximum runtime = %.10e seconds\n", _maxruntime), fflush (stderr);
   fprintf(stderr, "Check of input parameters only\n"), fflush (stderr);
-  fprintf(stderr, " RE_tau = %.10e\n ", RE_tau), fflush (stderr);
+  fprintf(stderr, " Re_ast = %.10e\n ", Re_ast), fflush (stderr);
   fprintf(stderr, " Bo     = %.10e\n ", BO), fflush (stderr);
-  fprintf(stderr, " RE_wave = %.10e\n ", RE_wave), fflush (stderr);
+  fprintf(stderr, " Re_wave = %.10e\n ", Re_wave), fflush (stderr);
   fprintf(stderr, " UstarRATIO = %.10e\n ", UstarRATIO), fflush (stderr);
   fprintf(stderr, " a_0k  = %.10e\n ", ak), fflush (stderr);
+  fprintf(stderr, " r_L0lam = %.10e\n ", r_L0lam), fflush (stderr);
+  fprintf(stderr, " Reference density = %8E\n ", rho_r), fflush (stderr);
+  fprintf(stderr, " Reference dynamic viscosity = %8E\n ", mu_r), fflush (stderr);
   fprintf(stderr, " MAX LEVEL  = %d\n ", MAXLEVEL), fflush (stderr);
   fprintf(stderr, " MIN LEVEL  = %d\n ", MINLEVEL), fflush (stderr);
   fprintf(stderr, " RELEASETIME = %.10e\n ", RELEASETIME), fflush (stderr);
@@ -207,10 +204,11 @@ int main(int argc, char *argv[]) {
      The domain is a cubic box centered on the origin and of length
      $L_0=2*\pi$, periodic in the x- and z-directions. */
 
-  L0 = 2*pi;
-  h_ = 1; // Water depth set L0/(2*pi) following Wu, Popinet & Deike JFM2022
-  k_ = 4; // Four waves per box
-  origin (-L0/2., 0., -L0/2.);
+  L0   = 2.0*pi;
+  h_   = L0/(2.0*pi); // Water depth set L0/(2*pi) following Wu, Popinet & Deike JFM2022
+  lam_ = L0/r_L0lam;
+  k_   = 2.0*pi/lam_;
+  origin (-L0/2., 0, -L0/2.);
 
   /**
      Set the boundary conditions. */
@@ -230,51 +228,27 @@ int main(int argc, char *argv[]) {
   /**
      Here we set the densities and viscosities corresponding to the
      parameters above. Note that these variables are defined in two-phase.h already. 
-     To set the dimensional parameters we can use two strategies:
-       1. If we want to sweep the space $a_0k$ and $U_\star/c$, we set $Ustar$ to a fixed value, say 0.25, and we modify
-          $c$. This strategy allows to keep the same $Re_\tau$ and if we also alter the water viscosity, we can keep fixed Re_wave (strategy of Wu, Popinet and Deike, JFM2022)
-       2. More general choice: keep fix $c$ and modify $U_\star/c$, but we cannot keep Re_tau and Re_wave simultaneously fixed (unless to alter the properties ratio)
+     To set the dimensional parameters we can use three strategies:
+       1. $u_\ast$ to a fixed value and we modify $c$. This strategy allows to keep the same $Re_\ast$ and (1a) modify either the wave Reynolds number and keep fixed the viscosity ratio or (2a) modify the viscosity ratio and keep fixed the wave Reynolds number (strategy of Wu, Popinet and Deike, JFM2022);
+       2. $c$ to a fixed value and we modify $u_\ast$. This strategy allows to keep the same viscosity ratio and wave Reynolds number, but we change $Re_\ast$.
      */
 
-  //Ustar    = c_*UstarRATIO; // Obsolete
-  Ustar    = 0.25; // Pick a fixed value
-  rho1     = 1.;
-  rho2     = rho1*RHO_RATIO;
+  rho2     = rho_r;
+  mu2      = mu_r;
+  rho1     = rho2/RHO_RATIO;
+  Ustar    = (mu2*Re_ast)/(rho2*(L0-h_));
   c_       = Ustar/UstarRATIO;
   g_       = k_*sq(c_)/( 1.0+(rho1-rho2)/(rho1*BO) ); // tune g_ 
   f.sigma  = g_*(rho1-rho2)/(BO*sq(k_));
   G.y      = -g_;
-  mu2      = rho2*Ustar*(L0-h_)/RE_tau;
-  //mu1     = mu2/(MU_RATIO)/alter_MU;
-  //RE      = rho1*c_*(2*pi/k_)/mu1; // RE now becomes a dependent Non-dim number on c
-  mu1      = rho1*c_*(2*pi/k_)/RE_wave; // RE now becomes a dependent Non-dim number on c
+  mu1      = rho1*c_*(2.*pi/k_)/Re_wave;
   alter_MU = (mu2/mu1)/MU_RATIO;
   T0_      = 2.*pi/sqrt(g_*k_ + f.sigma*k_*k_*k_/rho1);
-    
-  /*
-  rho1    = 1.;
-  rho2    = rho1*RHO_RATIO;
-  g_      = k_*sq(c_)/( 1.0+(rho1-rho2)/(rho1*BO) ); // tune g_ 
-  f.sigma = g_*(rho1-rho2)/(BO*sq(k_));
-  c_      = sqrt(g_/k_ + f.sigma*k_/rho0);
-  Ustar   = c_*UstarRATIO;
-  G.y     = -g_;
-  mu2     = Ustar*rho2*(L0-h_)/RE_tau;
-  //mu1     = mu2/(MU_RATIO)/alter_MU;
-  mu1     = mu2/MU_RATIO;
-  RE      = rho1*c_*(2*pi/k_)/mu1; // RE now becomes a dependent Non-dim number on c
-  T0_     = 2.*pi/sqrt(g_*k_ + f.sigma*k_*k_*k_/rho1);
-  */
 
   /**
      Give the address of av[] to a[] so that acceleration can be changed */
 
   a = av;
-  
-  /**
-     We set the initial grid */
-
-  init_grid (1 << 7);
   
   /**
      We set the refinement level */
@@ -349,11 +323,14 @@ event init (i = 0) {
 
   fprintf(stderr, "************************\n"), fflush (stderr);
   fprintf(stderr, "A-posteriori check of simulation parameters\n"), fflush (stderr);
-  fprintf(stderr, " RE_tau = %.10e\n ", rho2*Ustar*(L0-h_)/mu2), fflush (stderr);
+  fprintf(stderr, " Re_ast = %.10e\n ", rho2*Ustar*(L0-h_)/mu2), fflush (stderr);
   fprintf(stderr, " Bo    = %.10e\n ", g_*(rho1-rho2)/(f.sigma*sq(k_))), fflush (stderr);
-  fprintf(stderr, " RE_wave = %.10e\n ", rho1*c_*(2.0*pi/k_)/mu1), fflush (stderr);
+  fprintf(stderr, " Re_wave = %.10e\n ", rho1*c_*(2.0*pi/k_)/mu1), fflush (stderr);
   fprintf(stderr, " UstarRATIO = %.10e\n ", Ustar/c_), fflush (stderr);
   fprintf(stderr, " a_0k  = %.10e\n ", ak), fflush (stderr);
+  fprintf(stderr, " r_L0lam = %.10e\n ", r_L0lam), fflush (stderr);
+  fprintf(stderr, " Reference density = %8E\n ", rho_r), fflush (stderr);
+  fprintf(stderr, " Reference dynamic viscosity = %8E\n ", mu_r), fflush (stderr);
   fprintf(stderr, " MAX LEVEL  = %d\n ", MAXLEVEL), fflush (stderr);
   fprintf(stderr, " MIN LEVEL  = %d\n ", MINLEVEL), fflush (stderr);
   fprintf(stderr, " RELEASETIME  = %.10e\n ", RELEASETIME), fflush (stderr);
@@ -364,7 +341,7 @@ event init (i = 0) {
   fprintf(stderr, " do_fields  = %d\n ", do_fields), fflush (stderr);
   fprintf(stderr, " do_tagging  = %d\n ", do_tagging), fflush (stderr);
   fprintf(stderr, " gravity = %.10e\n ", g_), fflush (stderr);
-  fprintf(stderr, " RE_wave = %.10e\n ", rho1*c_*(2*pi/k_)/mu1), fflush (stderr);
+  fprintf(stderr, " Re_wave = %.10e\n ", rho1*c_*(2*pi/k_)/mu1), fflush (stderr);
   fprintf(stderr, " rho_r = %.10e\n ", (rho1/rho2)), fflush (stderr);
   fprintf(stderr, " mu_r  = %.10e\n ", (mu1/mu2)), fflush (stderr);
   fprintf(stderr, " alter_MU = %.10e\n ", alter_MU), fflush (stderr);
