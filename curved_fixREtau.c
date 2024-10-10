@@ -72,7 +72,7 @@ double eta_m0    = 1.0;    // initial mean eta0
 /**
    Define some output frequencies. */
 
-double tout_glo_my = 64.0; // output frequency of global observables (don't go beyond otherwise it does not print)
+double tout_glo_my = 64.00; // output frequency of global observables (don't go beyond otherwise it does not print)
 double tout_tag_my = 64.00; // output frequency of tagging
 double tout_eta_my = 32.00; // output frequency of interfacial quantity
 double tout_slc_my = 32.00; // output frequency of slices
@@ -591,8 +591,10 @@ event start(t = RELEASETIME) {
 event acceleration (i++) {
 
   double ampl = sq(Ustar)/(L0-h_);
-  foreach_face(x)
-    av.x[] += ampl*(1.-f[]);
+  foreach_face(x) {
+    double ff = (f[] + f[-1])/2.;
+    av.x[] += ampl*(1.0-ff);
+  }
 
 }
 
@@ -602,7 +604,6 @@ event acceleration (i++) {
 
 //# define POPEN(name, mode) fopen (name ".ppm", mode)
 
-//event movies (t = RELEASETIME; t <= T0_*end_sim; t += T0_/tout_mov) {
 event movies (t = RELEASETIME; t <= T0_*end_sim; t += T0_/tout_mov_my) {
 //event movies (i += 2) {
 
@@ -650,7 +651,6 @@ event movies (t = RELEASETIME; t <= T0_*end_sim; t += T0_/tout_mov_my) {
 
 }
 
-//event out_pro (t = RELEASETIME; t <= T0_*end_sim; t += T0_/tout_pro) {
 event out_pro (t = RELEASETIME; t <= T0_*end_sim; t += T0_/tout_pro_my) {
 //event out_pro (i += 2) {
 
@@ -675,7 +675,6 @@ event out_pro (t = RELEASETIME; t <= T0_*end_sim; t += T0_/tout_pro_my) {
 
 }
 
-//event slice_stat (t = RELEASETIME; t <= T0_*end_sim; t += T0_/tout_slc) {
 event slice_stat (t = RELEASETIME; t <= T0_*end_sim; t += T0_/tout_slc_my) {
 //event slice_stat (i += 2) {
 
@@ -771,7 +770,6 @@ event slice_stat (t = RELEASETIME; t <= T0_*end_sim; t += T0_/tout_slc_my) {
 
 }
 
-//event slice_spec (t = RELEASETIME; t <= T0_*end_sim; t += T0_/tout_slc) {
 event slice_spec (t = RELEASETIME; t <= T0_*end_sim; t += T0_/tout_cut_my) {
 //event slice_spec (i += 2) {
 
@@ -1156,7 +1154,6 @@ void output_global_obs_1 (char * fname, int istep, scalar c, scalar p_a, double 
 
 }
 
-//event bulk_budgets (t = RELEASETIME; t <= T0_*end_sim; t += T0_/tout_glo) {
 event bulk_budgets (t = RELEASETIME; t <= T0_*end_sim; t += T0_/tout_glo_my) {
 //event bulk_budgets (i += 2) {
 
@@ -1753,7 +1750,6 @@ event tagging (t = RELEASETIME; t <= T0_*end_sim; t += T0_/tout_tag_my) {
   
 }
 
-//event global_obs (t = RELEASETIME; t <= T0_*end_sim; t += T0_/tout_glo_my) {
 event global_obs (t = RELEASETIME; t <= T0_*end_sim; t += T0_/tout_glo_my) {
 //event global_obs (i += 2) {
 
@@ -1965,7 +1961,6 @@ event dump_backup (t = RELEASETIME; t <= T0_*end_sim; t += T0_/tout_rbk_my) {
 
 event end (t = end_sim*T0_) {
 
-  fprintf (fout, "i = %d t = %.10e\n", i, t); fflush(fout);
   dump ("end.bin");
 
   if ( pid() == 0 ) {
