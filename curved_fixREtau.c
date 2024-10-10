@@ -1823,7 +1823,6 @@ event global_obs (t = RELEASETIME; t <= T0_*end_sim; t += T0_/tout_glo_my) {
 
 }
 
-//event eta_loc (t = RELEASETIME; t <= T0_*end_sim; t += T0_/tout_eta) {
 event eta_loc (t = RELEASETIME; t <= T0_*end_sim; t += T0_/tout_eta_my) {
 //event eta_loc (i += 2) {
 
@@ -1887,7 +1886,6 @@ event eta_loc (t = RELEASETIME; t <= T0_*end_sim; t += T0_/tout_eta_my) {
 /** 
    Dump every tout_res period */
 
-//event dumpstep (t = RELEASETIME; t <= T0_*end_sim; t += T0_/tout_res) {
 event dumpstep (t = RELEASETIME; t <= T0_*end_sim; t += T0_/tout_res_my) {
 //event dumpstep (i += 2) {
 
@@ -1937,20 +1935,34 @@ event dumpstep (t = RELEASETIME; t <= T0_*end_sim; t += T0_/tout_res_my) {
 
 }
 
-//event dump_backup (t = RELEASETIME; t <= T0_*end_sim; t += T0_/tout_rbk) {
 event dump_backup (t = RELEASETIME; t <= T0_*end_sim; t += T0_/tout_rbk_my) {
 //event dump_backup (i += 2) {
- 
-  //fprintf(stderr, "I output the restarting for backup files every t=%.10e\n", T0_/tout_rbk), fflush (stderr);
+
   fprintf(stderr, "I output the restarting files for backup every t=%.10e\n", T0_/tout_rbk_my), fflush (stderr);
-  
+
   char dname[100];
-  u_water.x.nodump = true;
-  u_water.y.nodump = true;
-  u_water.z.nodump = true;
   sprintf (dname, "./restart_bk/dump_%09d.bin", i);
   dump (dname);
-  //dump (dname, {f,u.x,u.y,u.z,g.x,g.y,g.z,rhov});
+
+  /**
+     Log restarting info and size of the bin */
+
+  if (pid () == 0) {
+
+    fflush(stderr);
+    FILE * fp = fopen(dname, "r");
+    fseek(fp, 0L, SEEK_END);
+    long int res = ftell(fp);
+    fclose(fp);
+
+    fflush(stderr);
+    char name_1[80];
+    sprintf (name_1,"./restart_bk/log_restart_bk.out");
+    FILE * log_sim = fopen(name_1,"a");
+    fprintf (log_sim, "%.10e %.10e %.10e %.10e\n", t, 1.0*i, t-RELEASETIME, 1.0*res);
+    fclose(log_sim);
+
+  }
 
 }
 
