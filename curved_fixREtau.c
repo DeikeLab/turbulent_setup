@@ -455,6 +455,16 @@ event init (i = 0) {
     dump ("test_tw.bin");
     //return 1;
     */
+
+    /**
+       Add a check on RELEASETIME. */
+
+    if (t > RELEASETIME) {
+      fprintf(stderr, "The restarting time t is larger than the RELEASETIME\n"), fflush (stderr);
+      fprintf(stderr, "Please increase RELEASETIME otherwise the water velocity is not initialized\n"), fflush (stderr);
+      return 1;
+    }
+
   }
   else {
     if (restore ("restart.bin")) {
