@@ -505,9 +505,9 @@ event set_wave(i=0; i++; t<RELEASETIME) {
   }
 
   foreach() {
-    u.x[] = (1.0 - f[])*u.x[];
-    u.y[] = (1.0 - f[])*u.y[];
-    u.z[] = (1.0 - f[])*u.z[];
+    foreach_dimension() {
+      u.x[] = (1.0 - f[])*u.x[];
+    }
   }
 
 }
