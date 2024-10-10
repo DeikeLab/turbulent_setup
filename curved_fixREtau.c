@@ -584,12 +584,13 @@ event start(t = RELEASETIME) {
     }
   }
   else {
-    fprintf(stderr, "We initialize the liquid velocity with u_x_ge and u_y_ge\n"), fflush (stderr);
+    fprintf(stderr, "We initialize the liquid velocity with u_x_ge, u_y_ge and u_z_ge\n"), fflush (stderr);
     import_profile (f);
     foreach () {
       u.x[] += u_x_ge(x, z, y-h_)*f[]; // profile coherent with the wave spectrum
       //u.y[] += u_y_ge(x, z, y-h_)*f[]; // profile coherent with the wave spectrum
       u.y[] += u_z_ge(x, z, y-h_)*f[]; // profile coherent with the wave spectrum
+      u.z[] += u_y_ge(x, z, y-h_)*f[]; // profile coherent with the wave spectrum
     }
   }
 
