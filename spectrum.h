@@ -4,21 +4,18 @@
 The initial condition is a random broad-banded wave field based on externally imported power spectrum. Some spectrum related variables: */
 
 //#define N_mode_ 32 // Corresponds to input of 32 modes in kx and 33 modes in ky. This number has to match the files being read in
-//#define N_mode_ 64 // Corresponds to input of 32 modes in kx and 33 modes in ky. This number has to match the files being read in
-#define N_mode_ 192 
-/*
-// Corresponds to input of 64 modes in kx and 65 modes in ky. This number has to match the files being read in
-//double F_kxky_[N_mode_*(N_mode_+1)], omega[N_mode_*(N_mode_+1)], \
-//  phase[N_mode_*(N_mode_+1)];
-*/
-double F_kxky_[N_mode_*(N_mode_+1)], phase[N_mode_*(N_mode_+1)];
+//#define N_mode_ 64 // Corresponds to input of 64 modes in kx and 65 modes in ky. This number has to match the files being read in
+#define N_mode_ 192 // Corresponds to input of 192 modes in kx and 193 modes in ky. This number has to match the files being read in
+double F_kxky_[N_mode_*(N_mode_+1)], omega[N_mode_*(N_mode_+1)], \
+  phase[N_mode_*(N_mode_+1)];
 double kx_[N_mode_], ky_[N_mode_+1];
 double dkx_, dky_;
+//int RANDOM; // integer to seed random number generator
 
 /**
    Random number generator. */
-
-double randInRange(int min, int max) {
+double randInRange(int min, int max)
+{
   return min + (rand() / (double) (RAND_MAX) * (max - min + 1));
 }
 
@@ -34,10 +31,9 @@ void power_input() {
 //  } 
 //  ky_[N_mode_] = 2.*pi/L0*N_mode_/2; 
 
-  int length1D, length2D; // The length of the array to be read
-
 /* If using MPI. **/
 #if _MPI 
+  int length1D, length2D; // The length of the array to be read
   //char message[20];
   //int i, rank, size;
   int rank, size;
@@ -54,9 +50,7 @@ void power_input() {
     char filename[100];
     sprintf (filename, "F_kxky");
     FILE * fp = fopen (filename, "rb");
-    int length2D_exp = fread (a, sizeof(float), length2D, fp);
-    fprintf(stderr, " length2D_exp = %d\n ", length2D_exp), fflush (stderr);
-    fprintf(stderr, " length2D = %d\n ", length2D), fflush (stderr);
+    fread (a, sizeof(float), length2D, fp);
     for (int i=0;i<length2D;i++) {
       F_kxky_[i] = (double)a[i];
     }
@@ -67,10 +61,8 @@ void power_input() {
     length1D = N_mode_;
     float * b1 = (float*) malloc (sizeof(float)*length1D);
     sprintf (filename, "kx");
-    FILE * fp1 = fopen (filename, "rb");
-    int length1D_b1_exp = fread (b1, sizeof(float), length1D, fp1);
-    fprintf(stderr, " length1D_b1_exp = %d\n ", length1D_b1_exp), fflush (stderr);
-    fprintf(stderr, " length1D_b1 = %d\n ", length1D), fflush (stderr);
+    FILE *fp1 = fopen (filename, "rb");
+    fread (b1, sizeof(float), length1D, fp1);
     for (int i=0;i<length1D;i++) {
       kx_[i] = (double)b1[i];
     }
@@ -80,10 +72,8 @@ void power_input() {
     // One more mode in ky
     float * b2 = (float*) malloc (sizeof(float)*(length1D+1));
     sprintf (filename, "ky");
-    FILE * fp2 = fopen (filename, "rb");
-    int length1D_b2_exp = fread (b2, sizeof(float), length1D+1, fp2);
-    fprintf(stderr, " length1D_b2_exp = %d\n ", length1D_b2_exp), fflush (stderr);
-    fprintf(stderr, " length1D_b2 = %d\n ", length1D+1), fflush (stderr);
+    FILE *fp2 = fopen (filename, "rb");
+    fread (b2, sizeof(float), length1D+1, fp2);
     for (int i=0;i<length1D+1;i++) {
       ky_[i] = (double)b2[i];
     }
@@ -91,15 +81,14 @@ void power_input() {
     fprintf(stderr, "ky loaded!\n"), fflush (stderr);
 
     // Wave frequency omega, and randomly generated phase
-    //double kmod = 0;
+    double kmod = 0;
     int index = 0;
-    fprintf(stderr, "RANDOM Num. is: %d\n", RANDOM), fflush (stderr);
     srand(RANDOM); // We can seed it differently for different runs
     for (int i=0; i<N_mode_; i++) {
       for (int j=0; j<N_mode_+1; j++) {
 	index = j*N_mode_ + i;
-	//kmod = sqrt(sq(kx_[i]) + sq(ky_[j]));
-	//omega[index] = sqrt(g_*kmod);
+	kmod = sqrt(sq(kx_[i]) + sq(ky_[j]));
+	omega[index] = sqrt(g_*kmod);
 	phase[index] = randInRange (0, 2.*pi);
       }
     }
@@ -108,7 +97,7 @@ void power_input() {
   MPI_Bcast(&kx_, length1D, MPI_DOUBLE, root, MPI_COMM_WORLD);
   MPI_Bcast(&ky_, length1D+1, MPI_DOUBLE, root, MPI_COMM_WORLD);
   MPI_Bcast(&F_kxky_, length2D, MPI_DOUBLE, root, MPI_COMM_WORLD);
-  //MPI_Bcast(&omega, length2D, MPI_DOUBLE, root, MPI_COMM_WORLD);
+  MPI_Bcast(&omega, length2D, MPI_DOUBLE, root, MPI_COMM_WORLD);
   MPI_Bcast(&phase, length2D, MPI_DOUBLE, root, MPI_COMM_WORLD);
 
   // Make sure that the inputs are correct by printing them out
@@ -124,19 +113,12 @@ void power_input() {
   for (int i=0; i<length1D+1; i++) 
     fprintf (fout, "%g ", ky_[i]); 
   fclose (fout);
-  char checkout[100]; 
-  sprintf (checkout, "phase/phase-%d", pid()); 
-  FILE * fout = fopen (checkout, "w");
-  for (int i=0; i<length2D; i++) 
-    fprintf (fout, "%g ", phase[i]); 
-  fclose (fout); 
   */
 
 /**
    If not using MPI. */ 
 #else
-  //int length2D = N_mode_*(N_mode_+1);
-  length2D = N_mode_*(N_mode_+1);
+  int length2D = N_mode_*(N_mode_+1);
   float * a = (float*) malloc (sizeof(float)*length2D);
   char filename[100];
   sprintf (filename, "F_kxky");
@@ -168,16 +150,15 @@ void power_input() {
   }
   fclose (fp2);
 
-  //// Phase and omega, next focusing phase
-  // Phase, next focusing phase
+  // Phase and omega, next focusing phase
   double kmod = 0;
   int index = 0;
-  srand(RANDOM); // We can seed it differently for different runs
+  srand(0); 
   for (int i=0; i<N_mode_;i++) {
     for (int j=0;j<N_mode_+1;j++) {
       index = j*N_mode_ + i;
       kmod = sqrt(sq(kx_[i]) + sq(ky_[j]));
-      //omega[index] = sqrt(g_*kmod);
+      omega[index] = sqrt(g_*kmod);
       phase[index] = randInRange (0, 2.*pi);
     }
   }
@@ -186,8 +167,8 @@ void power_input() {
 
 /**
    Functions that compute the orbital velocity (based on linear wave equations). */
-double wave (double x, double y)
-{
+
+double wave (double x, double y) {
   double eta = 0;
   double ampl = 0, a = 0;
   int index = 0;
