@@ -37,7 +37,7 @@ int do_tagging = 1;                    // output or not tagging
 int prt_res = 9;                       // printing resolution
 int from_pr = 1;                       // from precursor simulation
 int st_wave = 1;                       // initialize with a Stokes Wave (1) or import a prescribed distribution
-//int RANDOM;                          // random number (already defined in spectrum.h)
+int RANDOM = 2;                        // random number (employed in spectrum.h)
 
 /**
    We define these values: the wave number, fluid depth, wave period, gravity acceleration,
@@ -116,7 +116,6 @@ face vector av[];
 /**
    Input paramters are passed in from the command line. */
 
-#include "./spectrum.h" // Used for new input method (the spectrum info)
 int main(int argc, char *argv[]) {
 
   /**
@@ -298,6 +297,7 @@ void set_profile (scalar f) {
                    stat1.min, stat1.sum, stat1.max), fflush (stderr);
 }
 
+#include "./spectrum.h" // Used for new input method (the spectrum info)
 void import_profile (scalar f) {
   power_input();
   dkx_ = kx_[1] - kx_[0];
