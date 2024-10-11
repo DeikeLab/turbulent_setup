@@ -36,12 +36,12 @@ do_tagging=0;
 prt_res=9; 
 from_pr=1;
 st_wave=0;
-RANDOM=2;
+rand_num=2;
 #
 srun windwave_turb -m 23:59:00 $Re_ast $BO $Re_wave $UstarRATIO $ak $r_L0lam \
 	                       $rho_r $mu_r $MAXLEVEL $MINLEVEL $RELEASETIME \
 	                       $uemaxRATIO $end_sim \
 			       $do_eta_loc $do_profile $do_fields $do_tagging \
 	                       $prt_res $from_pr \
-	                       $st_wave $RANDOM > out.log 2>&1
+	                       $st_wave $rand_num > out.log 2>&1
 #
