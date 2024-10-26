@@ -235,7 +235,7 @@ int main(int argc, char *argv[]) {
   rho1     = rho2/RHO_RATIO;
   Ustar    = (mu2*Re_ast)/(rho2*(L0-h_));
   c_       = Ustar/UstarRATIO; 
-  g_       = k_*sq(c_)/( 1.0+(rho1-rho2)/(rho1*BO) ); // tune g_ 
+  g_       = k_*sq(c_)/( 1.0+(rho1-rho2)/(rho1*BO) ); // tune g_ based on c_ and the Bond number 
   f.sigma  = g_*(rho1-rho2)/(BO*sq(k_));
   G.y      = -g_;
   mu1      = rho1*c_*(2.*pi/k_)/Re_wave;
