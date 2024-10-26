@@ -97,9 +97,9 @@ int counter = 0;
    The error on the components of the velocity field used for adaptive
    refinement. */
 
-double uemax  = 0.01;   // we are going to change later
-double uwemax = 0.001;  // we are going to change later
-double femax  = 0.0001; // we keep this value
+double uemax  = 1.0e-2; // we are going to change later
+double uwemax = 1.0e-3; // we are going to change later
+double femax  = 1.0e-4; // we keep this value
 
 /**
    The density and viscosity ratios are those of air and water. 
@@ -573,8 +573,7 @@ event set_wave(i=0; i++; t<RELEASETIME) {
 }
 
 /**
-   Release the wave at RELEASETIME. We don't do any adaptation at this step. 
-   */
+   Release the wave at RELEASETIME. */
 
 event start(t = RELEASETIME) {
   
@@ -729,8 +728,6 @@ event cmpt_f_shifted (t = RELEASETIME; t <= T0_*end_sim; t += T0_/tout_glo_my) {
 /** 
    Output video and field in uncompressed format 
    (we can compress later using convert <FILE>.ppm to <FILE>.mpg and open with mplayer) */
-
-//# define POPEN(name, mode) fopen (name ".ppm", mode)
 
 event movies (t = RELEASETIME; t <= T0_*end_sim; t += T0_/tout_mov_my) {
 //event movies (i += 2) {
