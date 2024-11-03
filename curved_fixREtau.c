@@ -1186,9 +1186,9 @@ event bulk_budgets (t = RELEASETIME; t <= T0_*end_sim; t += T0_/tout_glo_my) {
     double SDeformzx = SDeformxz;
     double SDeformzy = SDeformyz;
     double SDeformzz = dwdz + dwdz;
-    t_vel.x[] = SDeformxx*u.x[] + SDeformxy*u.y[] + SDeformxz*u.z[]; 
-    t_vel.y[] = SDeformyx*u.x[] + SDeformyy*u.y[] + SDeformyz*u.z[]; 
-    t_vel.z[] = SDeformzx*u.x[] + SDeformzy*u.y[] + SDeformzz*u.z[]; 
+    t_vel.x[] = SDeformxx*u.x[] + SDeformxy*u.x[] + SDeformxz*u.x[]; 
+    t_vel.y[] = SDeformyx*u.y[] + SDeformyy*u.y[] + SDeformyz*u.y[]; 
+    t_vel.z[] = SDeformzx*u.z[] + SDeformzy*u.z[] + SDeformzz*u.z[]; 
   }
 
   // --> Pressure power integral, viscous power integral (per phase and for both kinetic and gravitational forces)
