@@ -85,17 +85,17 @@ void sliceXY(char * fname, scalar s, double zp, int maxlevel, bool do_linear) {
     }
   }
 
-  FILE * fpver = fopen (fname,"w");
   if (pid() == 0) { // only the master prints!
+    FILE * fpver = fopen (fname,"w");
     for (int i = 0; i < nn; i++) {
       for (int j = 0; j < nn; j++) {
 	fwrite ( &field[i][j], sizeof(double), 1, fpver );
       }
     }
+    fclose (fpver); // we close at the end
     fflush (fpver);
   }
   matrix_free (field);
-  fclose (fpver); // we close at the end
 
 }
 
@@ -359,10 +359,10 @@ void output_3d_nw (char * fname, scalar s, int maxlevel, bool do_linear, bool pr
         }
       }
     }
-    fflush(fpver);
+    fclose (fpver); // we close at the end
+    fflush (fpver);
   }
   matrix_free (field);
-  fclose (fpver); // we close at the end
 }
 
 /** 
