@@ -2,7 +2,6 @@
    This is the wave wind interaction simulation with logarithmic wind profile and adaptive grid. 
    This is a turbulent configuration. */
 
-#include "grid/octree.h"
 #include "navier-stokes/centered.h"
 #include "two-phase.h"
 #include "navier-stokes/conserving.h"
@@ -10,7 +9,6 @@
 #include "reduced.h"  // reduced gravity
 #include "view.h"
 #include "tag.h"
-//#include "redistance.h"
 #include "sandbox/redistance2.h"
 #include "sandbox/basic_funcs.h"   
 #include "sandbox/profile6.h"   // From Antoon
