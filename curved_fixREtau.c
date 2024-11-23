@@ -1,7 +1,6 @@
 /** 
    This is the simulation file for the wind wave interaction problem. */
 
-#include "grid/octree.h"
 //#include "navier-stokes/centered.h"
 #include "sandbox/centered.h"
 #include "two-phase.h"
