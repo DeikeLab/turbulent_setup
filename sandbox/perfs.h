@@ -31,5 +31,15 @@ event perfs (i += 1) {
       fprintf (log_sim, "%d %.10e %d %.10e\n", i, t, i_sp, t_sp);
       fclose(log_sim);
     }
+
+    /**
+       Add a check on RELEASETIME. */
+
+    if (t > RELEASETIME) {
+      fprintf(stderr, "The restarting time t is larger than the RELEASETIME\n"), fflush (stderr);
+      fprintf(stderr, "Please increase RELEASETIME otherwise the water velocity is not initialized\n"), fflush (stderr);
+      return 1;
+    }
+
   }
 }
