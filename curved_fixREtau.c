@@ -477,15 +477,6 @@ event init (i = 0) {
     return 1;
     */
 
-    /**
-       Add a check on RELEASETIME. */
-
-    if (t > RELEASETIME) {
-      fprintf(stderr, "The restarting time t is larger than the RELEASETIME\n"), fflush (stderr);
-      fprintf(stderr, "Please increase RELEASETIME otherwise the water velocity is not initialized\n"), fflush (stderr);
-      return 1;
-    }
-
   }
   else {
     if (restore ("restart.bin")) {
@@ -732,9 +723,10 @@ event movies (t = RELEASETIME; t <= T0_*end_sim; t += T0_/tout_mov_my) {
 
   fprintf(stderr, "I output the movies every t=%.10e\n", T0_/tout_mov_my); fflush (stderr);
   
-  vector omg[];
+  //vector omg[];
   scalar omg_mod[];
-  vorticity3D (u, omg, omg_mod);
+  vorticity (u, omg_mod);
+  //vorticity3D (u, omg, omg_mod);
 
   char stg[80];
  
@@ -745,7 +737,8 @@ event movies (t = RELEASETIME; t <= T0_*end_sim; t += T0_/tout_mov_my) {
   box(false, lc = {1,1,1}, lw = 0.1);
   draw_vof ("f", color = "u.x");
   squares ("u.x"  , linear = true, map = rain_cm   , n = {0,0,1}, alpha = -L0/2.0);
-  squares ("omg.x", linear = true, map = balance_cm, n = {1,0,0}, alpha = -L0/2.0);
+  //squares ("omg.x", linear = true, map = balance_cm, n = {1,0,0}, alpha = -L0/2.0);
+  squares ("omg_mod", linear = true, map = balance_cm, n = {1,0,0}, alpha = -L0/2.0);
   sprintf (stg, "t = %0.3f", 2.0*pi*(t-RELEASETIME)/T0_);
   draw_string (stg, size = 30); 
   {
