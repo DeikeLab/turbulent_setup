@@ -627,11 +627,8 @@ event movies (t = RELEASETIME; t <= T0_*end_sim; t += T0_/tout_mov_my) {
 	width = 1300, height = 1300, bg = {1,1,1}, samples = 4);
   box(false, lc = {1,1,1}, lw = 0.1);
   draw_vof ("f", color = "u.x");
-  //squares ("u.x", linear = true, n = {0,0,1}, alpha = -L0/2.0);
-  //squares ("omega", linear = true, n = {1,0,0}, alpha = -L0/2.0);
-  squares ("u.x"  , linear = true, map = rain_cm   , n = {0,0,1}, alpha = -L0/2.0);
-  //squares ("omega", linear = true, map = balance_cm, n = {1,0,0}, alpha = -L0/2.0);
-  squares ("omega", linear = true, map = jet, n = {1,0,0}, alpha = -L0/2.0);
+  squares ("u.x", linear = true, map = rain_cm   , n = {0,0,1}, alpha = -L0/2.0);
+  squares ("u.z", linear = true, map = balance_cm, n = {1,0,0}, alpha = -L0/2.0);
   //cells (n = {1,0,0}, alpha = -L0/2.0);
   sprintf (stg, "t = %0.3f", 2.0*pi*(t-RELEASETIME)/T0_);
   draw_string (stg, size = 30); 
