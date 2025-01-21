@@ -54,7 +54,7 @@ def cart_to_wf(p_2d,eta_1d,N,L0,k_,eta_m0):
       z        = np.linspace(-eta_m0,L0-eta_m0,N,endpoint=False);
       f        = interp1d(z,p_2d[i,:],kind='quadratic',fill_value = "extrapolate");
       zeta     = z;
-      zplot[i] = zeta + eta_1d[i]*np.exp(-k_*np.abs(zeta));
+      zplot[i] = zeta + eta_1d[i]*np.exp(-1*np.abs(zeta));
       p_2d_interp[i] = f(zplot[i]);
       #
     p_1d_interp = np.average(p_2d_interp,axis=-1); # average along the x direction

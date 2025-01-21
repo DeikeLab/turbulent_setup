@@ -18,7 +18,7 @@ void vof_advection2 (scalar f2, double dt2, face vector uf2, int i) {
 double my_interpolation(Point point, scalar s, double xp, double yp, double zp) {
 
   //boundary({s}); // we need to avoid this call since we use my_interpolation 
-  //                  only if point.level > 0 (i.e. only on some processors)
+  //                  only if point.level > 0 (i.e., only on some processors)
   //                  The code can get stuck forever here (only some processors enter here)
   //                  Manual boundary conditions must be imposed on any scalar field you want to 
   //                  pass to my_interpolate
@@ -99,7 +99,7 @@ void sliceXY(char * fname, scalar s, double zp, int maxlevel, bool do_linear) {
    Creation of a 3D matrix. */
 
 void * matrix_new_3d (int nx, int ny, int nz, size_t size) {
-  void ** m = qmalloc(nx, void *);  // Define a pointer that points to every x coordinate.
+  void ** m = qmalloc(nx, void *);  //Define a pointer that points to every x coordinate.
   char * a  = qmalloc(nx*ny*nz*size, char);
   for (int i=0; i<nx; i++) {
     m[i] = a+i*ny*nz*size;
@@ -332,7 +332,8 @@ void profile_output (vector u, int istep, int MAXLEVEL) {
 /**
    We also want to count the drops and bubbles in the flow. */
 
-void countDropsBubble (char * name_1, char * name_2, char * name_3, int istep, scalar c) {
+void countDropsBubble (char * name_1, char * name_2, char * name_3, 
+		       double time, double RELEASETIME, int istep, scalar c) {
 
   //scalar m1[]; // droplets
   //scalar m2[]; // bubbles
@@ -403,16 +404,17 @@ void countDropsBubble (char * name_1, char * name_2, char * name_3, int istep, s
     We first output the number of droplets and bubbles. */
 
     FILE * ftot = fopen(name_1,"a");
-    fprintf (ftot, "%.10e %.10e %.10e %.10e\n", t, 1.0*istep, 1.0*(n1-1), 1.0*(n2-1)); // we remove the main region
+    fprintf (ftot, "%.10e %.10e %.10e %.10e %.10e\n", time, time-RELEASETIME, 1.0*istep, 1.0*(n1-1), 1.0*(n2-1)); // we remove the main region
     fclose(ftot);
 
     /**
-    We output separately the volume and position of each droplet and bubble to a file. */
+    We output separately the volume and position of each droplet and bubble to file. */
 
     FILE * fdrop = fopen(name_2,"a");
     for (int j=0; j<n1; j++) {
       fprintf (fdrop, "%d %.10e %.10e %.10e %.10e\n",
                          j, v1[j], b1x[j]/v1[j], b1y[j]/v1[j], b1z[j]/v1[j]);
+      //fprintf (fdrop, "%d %.10e\n", j, v1[j]);
     }
     fclose(fdrop);
     fflush(fdrop);
@@ -421,6 +423,7 @@ void countDropsBubble (char * name_1, char * name_2, char * name_3, int istep, s
     for (int j=0; j<n2; j++) {
       fprintf (fbubb, "%d %.10e %.10e %.10e %.10e\n",
                         j, v2[j], b2x[j]/v2[j], b2y[j]/v2[j], b2z[j]/v2[j]);
+      //fprintf (fbubb, "%d %.10e\n", j, v2[j]);
     }
     fclose(fbubb);
     fflush(fbubb);
