@@ -1,6 +1,6 @@
 
 /** 
-   Function employed to shift the VoF of a fixed quantity. */
+   Auxiliary function employed to shift the VoF of a fixed quantity. */
 
 void vof_advection2 (scalar f2, double dt2, face vector uf2, int i) {
   
@@ -11,6 +11,56 @@ void vof_advection2 (scalar f2, double dt2, face vector uf2, int i) {
   vof_advection ({f2}, i);
   dt = dt_stored;
   uf = uf_stored;
+
+}
+
+/** 
+   Three components of the vorticity vector */
+
+void vorticity3D (vector u, vector omg) {
+
+  foreach() {
+    omg.x[] = ( (u.z[0,1,0]-u.z[0,-1,0]) - (u.y[0,0,1]-u.y[0,0,-1]) )/(2.0*Delta);
+    omg.y[] = ( (u.x[0,0,1]-u.x[0,0,-1]) - (u.z[1,0,0]-u.z[-1,0,0]) )/(2.0*Delta);
+    omg.z[] = ( (u.y[1,0,0]-u.y[-1,0,0]) - (u.x[0,1,0]-u.x[0,-1,0]) )/(2.0*Delta);
+  }
+
+}
+
+/** 
+   Function employed to shift the VoF vertically of my_stp_eta_fs */
+
+void shift_vof (scalar f, coord ufv_fs, int i, double my_stp_eta_fs, double L0, scalar fs) {
+  
+  // We initialize fs with the latest available f
+  scalar_clone(fs,f);
+  foreach() {
+    fs[] = f[];
+  }
+  fs.nodump = true; // we need to put here
+#if TREE
+  fs.refine = fs.prolongation = fraction_refine;
+  restriction({fs});
+#endif
+
+  // We define the shifting velocity
+  face vector uuf_fs[];
+  foreach_face() {
+    uuf_fs.x[] = ufv_fs.x;
+  }
+
+  // We shift fs of my_stp_eta_fs
+  double pdt_max = 0.50*CFL*L0/(1 << grid->maxdepth); // CFL = 0.8 and 0.50*CFL = 0.4, which is good for VoF
+  unsigned int num_min = my_stp_eta_fs/(fabs(ufv_fs.y)*pdt_max);
+  double pdt = my_stp_eta_fs/(1.0*(num_min+1));
+  double yp = 0;
+  int ps_i = 0;
+  while (fabs(yp) < my_stp_eta_fs) {
+    vof_advection2 (fs, pdt, uuf_fs, i);
+    yp += pdt*ufv_fs.y;
+    ps_i++;
+    fprintf(stderr, "translation of the VoF along y. Tmp pos: %g. Pseudo it: %d\n", yp, ps_i);
+  }
 
 }
 
@@ -71,55 +121,9 @@ double cmpt_savg_yp (scalar s, double yp, int maxlevel, bool do_linear) {
 /** 
    Output a 2D field at a fixed zp, defined by the user. */
 
-void sliceXY(char * fname, scalar s, double zp, int maxlevel, bool do_linear) {
+void sliceXY (char * fname, scalar s, double zp, int maxlevel, bool do_linear, bool print_bin) {
 
-  int nn = (1<<maxlevel);
-  double ** field = matrix_new (nn, nn, sizeof(double));
-  double stp = L0/(double)nn;
-
-  for (int i = 0; i < nn; i++) {
-    double xp = stp*i + X0 + stp/2.;
-    for (int j = 0; j < nn; j++) {
-      double yp = stp*j + Y0 + stp/2.;
-      field[i][j] = interpolate(s,xp,yp,zp,do_linear);
-    }
-  }
-
-  if (pid() == 0) { // only the master prints!
-    FILE * fpver = fopen (fname,"w");
-    for (int i = 0; i < nn; i++) {
-      for (int j = 0; j < nn; j++) {
-	fwrite ( &field[i][j], sizeof(double), 1, fpver );
-      }
-    }
-    fclose (fpver); // we close at the end
-    fflush (fpver);
-  }
-  matrix_free (field);
-
-}
-
-/** 
-   Creation of a 3D matrix. */
-
-void * matrix_new_3d (int nx, int ny, int nz, size_t size) {
-  void ** m = qmalloc(nx, void *);  //Define a pointer that points to every x coordinate.
-  char * a  = qmalloc(nx*ny*nz*size, char);
-  for (int i=0; i<nx; i++) {
-    m[i] = a+i*ny*nz*size;
-  }
-  return m;
-}
-
-/** 
-   This function prints a 2D field averaged in the spanwise z direction. 
-   Note that the field is linearly interpolated on cartesian and equidistant mesh. 
-   Note: it is not working! */
-
-/*
-void output_2d_span_avg_nw (char * fname, scalar s, int maxlevel, bool do_linear, bool print_bin) {
-
-  boundary ({s}); // must be kept?
+  boundary ({s}); // must be kept since we use interpolate_linear
   int nn = (1<<maxlevel);
   double stp = 0.999999*(L0+X0-X0)/(double)nn; // to avoid interpolated point coincides with fine grid boundary
 
@@ -129,11 +133,11 @@ void output_2d_span_avg_nw (char * fname, scalar s, int maxlevel, bool do_linear
     double xp = stp*i + X0 + stp/2.;
     for (int j = 0; j < nn; j++) {
       double yp = stp*j + Y0 + stp/2.;
-      field[i][j] = 0.0;
-      for (int k = 0; k < nn; k++) {
-        double zp = stp*k + Z0 + stp/2.;
-	field[i][j] += interpolate(s,xp,yp,zp,do_linear)/(double)nn; 
+      double val = nodata;
+      foreach_point (xp, yp, zp, serial) {
+        val = do_linear ? interpolate_linear (point, s, xp, yp, zp) : s[];
       }
+      field[i][j] = val != nodata ? val : 0.0; 
     }
   }
 
@@ -173,13 +177,154 @@ void output_2d_span_avg_nw (char * fname, scalar s, int maxlevel, bool do_linear
 		MPI_COMM_WORLD);
 #endif
   //fprintf(stderr, "I am here 5\n"), fflush (stderr);
-
   matrix_free (field);
   fclose (fpver); // we close at the end
 
 }
 
-*/
+/** 
+   Output a 2D field at a fixed zp, defined by the user (with list) */
+
+void sliceXY_ls (char **fname, scalar * list, double zp, int maxlevel, 
+		 bool do_linear, bool print_bin, int pos, int istep) {
+
+  // Preliminary operation!
+  for (scalar s in list) {
+    boundary ({s}); // must be kept since we use interpolate_linear
+  }
+  int len = list_len(list);
+  int nn = (1<<maxlevel);
+  double stp = 0.999999*(L0+X0-X0)/(double)nn; // to avoid interpolated point coincides with fine grid boundary
+  
+  // Fill the matrix with the entire scalar list
+  double ** field = (double **) matrix_new (nn, nn, len*sizeof(double));
+  for (int i = 0; i < nn; i++) {
+    double xp = stp*i + X0 + stp/2.;
+    for (int j = 0; j < nn; j++) {
+      double yp = stp*j + Y0 + stp/2.;
+      double val = nodata;
+      int q = 0;
+      for (scalar s in list) {
+        foreach_point (xp, yp, zp, serial) {
+          val = do_linear ? interpolate_linear (point, s, xp, yp, zp) : s[];
+        }
+        field[i][len*j+q++] = val != nodata ? val : 0.0; 
+      }
+    }  
+  }
+
+  // Reduction operation
+  if (pid() == 0) { // master
+#if _MPI
+    MPI_Reduce (MPI_IN_PLACE, field[0], len*sq(nn), MPI_DOUBLE, MPI_SUM, 0,
+  	        MPI_COMM_WORLD);
+#endif
+  }
+#if _MPI
+  else { // slave
+    MPI_Reduce (field[0], NULL, len*sq(nn), MPI_DOUBLE, MPI_SUM, 0,
+	        MPI_COMM_WORLD);
+  }
+#endif
+
+  // Print
+  if (pid() == 0) { // only the master prints!
+    for (int k = 0; k < len; k++) {
+      char filename[100];
+      sprintf (filename, "./slices/%s_2d_%03d_%09d.bin", fname[k], pos, istep);
+      FILE * fpver = fopen (filename,"w");
+      for (int i = 0; i < nn; i++) {
+        for (int j = 0; j < nn; j++) {
+          fwrite ( &field[i][len*j+k], sizeof(double), 1, fpver );
+        }
+      }
+      fflush (fpver);
+      fclose (fpver); // we close at the end
+    }
+  }
+  matrix_free (field); // we deallocate here field
+
+}
+
+/** 
+   Creation of a 3D matrix. */
+
+void * matrix_new_3d (int nx, int ny, int nz, size_t size) {
+  void ** m = qmalloc(nx, void *);  //Define a pointer that points to every x coordinate.
+  char * a  = qmalloc(nx*ny*nz*size, char);
+  for (int i=0; i<nx; i++) {
+    m[i] = a+i*ny*nz*size;
+  }
+  return m;
+}
+
+/** 
+   Perform the spanwise averaging in a memory efficient way (with list) */
+
+void output_2d_span_avg_ls (char **fname, scalar * list, int maxlevel, 
+		            bool do_linear, bool print_bin, int istep) {
+
+  // Preliminary operation!
+  for (scalar s in list) {
+    boundary ({s}); // must be kept since we use interpolate_linear
+  }
+  int len = list_len(list);
+  int nn = (1<<maxlevel);
+  double stp = 0.999999*(L0+X0-X0)/(double)nn; // to avoid interpolated point coincides with fine grid boundary
+  
+  // Fill the matrix with the entire scalar list
+  double ** field = (double **) matrix_new (nn, nn, len*sizeof(double));
+  for (int i = 0; i < nn; i++) {
+    double xp = stp*i + X0 + stp/2.;
+    for (int j = 0; j < nn; j++) {
+      double yp = stp*j + Y0 + stp/2.;
+      field[i][j] = 0.0;
+      for (int k = 0; k < nn; k++) {
+        double zp = stp*k + Z0 + stp/2.;
+        double val = nodata;
+        int q = 0;
+        for (scalar s in list) {
+          foreach_point (xp, yp, zp, serial) {
+            val = do_linear ? interpolate_linear (point, s, xp, yp, zp) : s[];
+          }
+          field[i][len*j+q++] += val != nodata ? val/(double)nn : 0.0;
+        }	
+      }
+    }  
+  }
+
+  // Reduction operation
+  if (pid() == 0) { // master
+#if _MPI
+    MPI_Reduce (MPI_IN_PLACE, field[0], len*sq(nn), MPI_DOUBLE, MPI_SUM, 0,
+  	        MPI_COMM_WORLD);
+#endif
+  }
+#if _MPI
+  else { // slave
+    MPI_Reduce (field[0], NULL, len*sq(nn), MPI_DOUBLE, MPI_SUM, 0,
+	        MPI_COMM_WORLD);
+  }
+#endif
+
+  // Print
+  if (pid() == 0) { // only the master prints!
+    for (int k = 0; k < len; k++) {
+      char filename[100];
+      sprintf (filename, "./fields/%s_2d_avg_%09d.bin", fname[k], istep);
+      FILE * fpver = fopen (filename,"w");
+      for (int i = 0; i < nn; i++) {
+        for (int j = 0; j < nn; j++) {
+          fwrite ( &field[i][len*j+k], sizeof(double), 1, fpver );
+        }
+      }
+      fflush (fpver);
+      fclose (fpver); // we close at the end
+    }
+  }
+  matrix_free (field); // we deallocate here field
+
+}
 
 /** 
    Perform the spanwise averaging in a memory efficient way */
@@ -204,11 +349,6 @@ void output_2d_span_avg (char * fname, scalar s, int maxlevel, bool do_linear, b
           val = do_linear ? interpolate_linear (point, s, xp, yp, zp) : s[];
 	}
 	field[i][j] += val != nodata ? val/(double)nn : 0.0; 
-	/*
-	if (val != nodata) {
-          field[i][j] += val/(double)nn;
-	}
-	*/
       }
     }
   }
@@ -256,7 +396,7 @@ void output_2d_span_avg (char * fname, scalar s, int maxlevel, bool do_linear, b
 }
 
 /** 
-   Output a 3d field in a linearly interpolated uniform grid. */
+   Output a 3d field in a linearly interpolated uniform grid */
 
 void output_3d (char * fname, scalar s, int maxlevel, bool do_linear, bool print_bin) {
 
@@ -275,7 +415,7 @@ void output_3d (char * fname, scalar s, int maxlevel, bool do_linear, bool print
         foreach_point (xp, yp, zp, serial) {
           val = do_linear ? interpolate_linear (point, s, xp, yp, zp) : s[];
 	}
-        field[i][j*nn+k] = val;
+        field[i][j*nn+k] = val != nodata ? val : 0.0;
       }
     }
   }
@@ -283,7 +423,7 @@ void output_3d (char * fname, scalar s, int maxlevel, bool do_linear, bool print
   FILE * fpver = fopen (fname,"w");
   if (pid() == 0) { // master
 #if _MPI
-    MPI_Reduce (MPI_IN_PLACE, field[0], cube(nn), MPI_DOUBLE, MPI_MIN, 0,
+    MPI_Reduce (MPI_IN_PLACE, field[0], cube(nn), MPI_DOUBLE, MPI_SUM, 0,
 		MPI_COMM_WORLD);
 #endif
     if(print_bin) { // print in binary format
@@ -309,64 +449,16 @@ void output_3d (char * fname, scalar s, int maxlevel, bool do_linear, bool print
   }
 #if _MPI
   else // slave
-    MPI_Reduce (field[0], NULL, cube(nn), MPI_DOUBLE, MPI_MIN, 0,
+    MPI_Reduce (field[0], NULL, cube(nn), MPI_DOUBLE, MPI_SUM, 0,
 		MPI_COMM_WORLD);
 #endif
   matrix_free (field);
   fclose (fpver); // we close at the end
+
 }
 
 /** 
-   Output a 3d field in a linearly interpolated uniform grid.
-   Alternative approach: so far it does not work since it gets stuck. Use the approach above! */
-
-void output_3d_nw (char * fname, scalar s, int maxlevel, bool do_linear, bool print_bin) {
-
-  boundary ({s}); // must be kept?
-  int nn = (1<<maxlevel);
-  double stp = 0.999999*(L0+X0-X0)/(double)nn; // to avoid interpolated point coincides with fine grid boundary
-  
-  double ** field = (double **) matrix_new_3d (nn, nn, nn, sizeof(double));
-  for (int i = 0; i < nn; i++) {
-    double xp = stp*i + X0 + stp/2.;
-    for (int j = 0; j < nn; j++) {
-      double yp = stp*j + Y0 + stp/2.;
-      for (int k = 0; k < nn; k++) {
-        double zp = stp*k + Z0 + stp/2.;
-        field[i][j*nn+k] = interpolate(s,xp,yp,zp,do_linear);
-      }
-    }
-  }
-
-  FILE * fpver = fopen (fname,"w");
-  if (pid() == 0) { // master
-    if(print_bin) { // print in binary format
-      for (int i = 0; i < nn; i++) {
-        for (int j = 0; j < nn; j++) {
-          for (int k = 0; k < nn; k++) {
-            fwrite ( &field[i][j*nn+k], sizeof(double), 1, fpver );
-          }
-        }
-      }
-    }
-    else { // print in ascii format
-      for (int i = 0; i < nn; i++) {
-        for (int j = 0; j < nn; j++) {
-          for(int k = 0; k < nn; k++) {
-            fprintf(fpver, "%.10e", field[i][j*nn+k]);
-            fputc('\n', fpver);  // not double quotation""
-          }
-        }
-      }
-    }
-    fclose (fpver); // we close at the end
-    fflush (fpver);
-  }
-  matrix_free (field);
-}
-
-/** 
-   Helper function for fast data sorting. */
+   Helper function for fast data sorting */
 
 int compare (const void *a, const void *b) {
 
@@ -386,7 +478,7 @@ int compare (const void *a, const void *b) {
 }
 
 /** 
-   Define some variables for the profile output. */
+   Define some variables for the profile output */
 
 void profile_output (vector u, scalar p, scalar p_hd,
 		     vertex scalar phi, int istep, int MAXLEVEL, char * name_pf) {
@@ -438,13 +530,11 @@ void profile_output (vector u, scalar p, scalar p_hd,
 }
 
 /**
-   We also want to count the drops and bubbles in the flow. */
+   We also want to count the drops and bubbles in the flow */
 
 void countDropsBubble (char * name_1, char * name_2, char * name_3, 
 		       double time, double RELEASETIME, int istep, scalar c) {
 
-  //scalar m1[]; // droplets
-  //scalar m2[]; // bubbles
   scalar m1 = new scalar; // droplets
   scalar m2 = new scalar; // bubbles
   foreach() {
@@ -512,7 +602,7 @@ void countDropsBubble (char * name_1, char * name_2, char * name_3,
     We first output the number of droplets and bubbles. */
 
     FILE * ftot = fopen(name_1,"a");
-    fprintf (ftot, "%.10e %.10e %.10e %.10e %.10e\n", time, time-RELEASETIME, 1.0*istep, 1.0*(n1-1), 1.0*(n2-1)); // we remove the main region
+    fprintf (ftot, "%.10e %.10e %.10e %.10e %.10e\n", time, 1.0*istep, time-RELEASETIME, 1.0*(n1-1), 1.0*(n2-1)); // we remove the main region
     fclose(ftot);
 
     /**
@@ -522,7 +612,6 @@ void countDropsBubble (char * name_1, char * name_2, char * name_3,
     for (int j=0; j<n1; j++) {
       fprintf (fdrop, "%d %.10e %.10e %.10e %.10e\n",
                          j, v1[j], b1x[j]/v1[j], b1y[j]/v1[j], b1z[j]/v1[j]);
-      //fprintf (fdrop, "%d %.10e\n", j, v1[j]);
     }
     fclose(fdrop);
     fflush(fdrop);
@@ -531,7 +620,6 @@ void countDropsBubble (char * name_1, char * name_2, char * name_3,
     for (int j=0; j<n2; j++) {
       fprintf (fbubb, "%d %.10e %.10e %.10e %.10e\n",
                         j, v2[j], b2x[j]/v2[j], b2y[j]/v2[j], b2z[j]/v2[j]);
-      //fprintf (fbubb, "%d %.10e\n", j, v2[j]);
     }
     fclose(fbubb);
     fflush(fbubb);
@@ -541,9 +629,9 @@ void countDropsBubble (char * name_1, char * name_2, char * name_3,
 }
 
 /** 
-   Compute the bulk dissipation in air and water. */
+   Compute the bulk dissipation in air and water */
 
-int dissipation_rate (double mu1, double mu2, vector u, double* rates) {
+int dissipation_rate (double mu1, double mu2, vector u, scalar f1s, scalar f2s, double* rates) {
 	
   double rateWater = 0.0;
   double rateAir = 0.0;
@@ -569,8 +657,8 @@ int dissipation_rate (double mu1, double mu2, vector u, double* rates) {
     double sqterm = 2.*dv()*(sq(SDeformxx) + sq(SDeformxy) + sq(SDeformxz) +
 			     sq(SDeformyx) + sq(SDeformyy) + sq(SDeformyz) +
 			     sq(SDeformzx) + sq(SDeformzy) + sq(SDeformzz));
-    rateWater += mu1*(0.+f[])*sqterm; // water
-    rateAir   += mu2*(1.-f[])*sqterm; // air
+    rateWater += mu1*(0.0+f1s[])*sqterm; // water
+    rateAir   += mu2*(1.0-f2s[])*sqterm; // air
   }
   rates[0] = rateWater;
   rates[1] = rateAir;
@@ -579,7 +667,7 @@ int dissipation_rate (double mu1, double mu2, vector u, double* rates) {
 }
 
 /**
-   We want to compute some quantities at the interface. */
+   We want to compute some quantities at the interface */
 
 void output_int_qtn (char * fname, int istep, int MAXLEVEL, double time, double RELEASETIME, 
 		     scalar c, vector u, scalar p_a, double stp_eta, double stp_pos) {
@@ -1074,7 +1162,7 @@ void output_global_obs_1 (char * fname, int istep, int MAXLEVEL, double time, do
     fflush(stderr);
     FILE * global_obs = fopen (fname, "a");
     fprintf (global_obs, "%8E %8E %8E %8E %8E %8E %8E %8E %8E %8E %8E %8E %8E %8E %8E %8E %8E %8E %8E %8E %8E %8E %8E %8E %8E %8E %8E %8E %8E %8E %8E %8E %8E %8E %8E %8E\n", 
-                         time, time-RELEASETIME, 1.0*istep, area, eta_m, k_*sqrt(amp2), area_my, eta_my, k_*sqrt(amp2_my), pr_m,  
+                         time, 1.0*istep, time-RELEASETIME, area, eta_m, k_*sqrt(amp2), area_my, eta_my, k_*sqrt(amp2_my), pr_m,  
 			 mf_px, mf_py, mf_pz, 
 			 mp_px, mp_py, mp_pz, 
 			 mf_vx, mf_vy, mf_vz, 

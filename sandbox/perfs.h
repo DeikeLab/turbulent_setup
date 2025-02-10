@@ -20,6 +20,7 @@ event perfs (i += 1) {
     fclose(fp);
   }
   if (from_pr == 1 && is_first) {
+
     i_sp = i;
     t_sp = t;
     is_first = false;
