@@ -77,14 +77,14 @@ double eta_m0    = 1.0;    // initial mean eta0
    Define some output frequencies (fraction of the wave period, T0) */
 
 double tout_glo_my = 64.0; // output frequency of global observables
-double tout_tag_my = 32.0; // output frequency of tagging
+double tout_tag_my = 64.0; // output frequency of tagging
 double tout_eta_my = 32.0; // output frequency of interfacial quantity
-double tout_fld_my = 32.0; // output frequency of slices
+double tout_fld_my = 32.0; // output frequency of fields
 double tout_pro_my = 32.0; // output frequency of 1d profile
 double tout_mov_my = 4.00; // output frequency of the movie
 double tout_res_my = 4.00; // output frequency of restart
-double tout_cut_my = 2.00; // output frequency of some 2D cuts (keep <<tout_cut_my>> and <<tout_rbk_my>> for future reuse)
-double tout_rbk_my = 2.00; // output frequency of the backup restarting files (keep <<tout_cut_my>> and <<tout_rbk_my>> for future reuse)
+double tout_cut_my = 2.00; // output frequency of some 2D cuts (keep <<tout_cut_my>> equal to <<tout_rbk_my>> for future reuse)
+double tout_rbk_my = 2.00; // output frequency of the backup restarting files (keep <<tout_rbk_my>> equal to <<tout_cut_my>> for future reuse)
 
 /**
    For the restarting step. */
@@ -399,8 +399,15 @@ event init (i = 0) {
 
   /**
      Restart from the latest dump files or initialize a new two-phase simulation */
-
+    
   if (from_pr == 1) {
+
+    // Check that the restart_sp.bin exists
+    FILE * fp = fopen("restart_sp.bin", "r");
+    if( fp == NULL ) {
+      fprintf(stderr, "The precursor field to restart the simulation is absent, please provide it!\n"), fflush (stderr);
+      return 1; 
+    }
 
     // Restore the simulation
     scalar cs = new scalar; // temporary file just for restore 
@@ -485,7 +492,7 @@ event init (i = 0) {
 event log_simulation (i += 10) {
  
   int min_level = +100, max_level = -100;
-  foreach(reduction(min:min_level),reduction(max:max_level)) {
+  foreach(reduction(min:min_level) reduction(max:max_level)) {
     if (level > max_level) max_level = level;
     if (level < min_level) min_level = level;
   }
@@ -997,8 +1004,8 @@ event bulk_budgets (t = RELEASETIME; t <= T0_*end_sim; t += T0_/tout_glo_my) {
   // --> Kinetic, Potential energy, dissipation of water and air (bulk)
   double keWat = 0., gpeWat = 0.;
   double keAir = 0., gpeAir = 0.;
-  foreach(reduction(+:keWat),reduction(+:gpeWat) 
-	  reduction(+:keAir),reduction(+:gpeAir)) {
+  foreach(reduction(+:keWat) reduction(+:gpeWat) 
+	  reduction(+:keAir) reduction(+:gpeAir)) {
     double norm2_vel = 0.;
     foreach_dimension() {
       norm2_vel += sq(u.x[]);
@@ -1031,8 +1038,8 @@ event bulk_budgets (t = RELEASETIME; t <= T0_*end_sim; t += T0_/tout_glo_my) {
   // --> Mean velocity (all three components) for both phases
   double vol_a_m = 0., vol_w_m = 0.;
   coord vel_a_m = {0.,0.,0.}, vel_w_m = {0.,0.,0.};
-  foreach(reduction(+:vol_a_m),reduction(+:vol_w_m), 
-	  reduction(+:vel_a_m),reduction(+:vel_w_m)) {
+  foreach(reduction(+:vol_a_m) reduction(+:vol_w_m) 
+	  reduction(+:vel_a_m) reduction(+:vel_w_m)) {
     vol_a_m += (1.0-f2s[])*dv();
     //vol_w_m += (0.0+f1s[])*dv();
     vol_w_m += (0.0+f[])*dv();
@@ -1047,7 +1054,7 @@ event bulk_budgets (t = RELEASETIME; t <= T0_*end_sim; t += T0_/tout_glo_my) {
   scalar phi_tmp[];
   curvature (f, phi_tmp);
   coord mom_m = {0.,0.,0.}, vel_m = {0.,0.,0}, sur_t = {0.,0.,0.};
-  foreach(reduction(+:mom_m),reduction(+:vel_m),reduction(+:sur_t)) {
+  foreach(reduction(+:mom_m) reduction(+:vel_m) reduction(+:sur_t)) {
     foreach_dimension() {
       coord int_ft = {0.,0.,0};
       if(interfacial(point,f) && phi_tmp[] != nodata) {
@@ -1084,9 +1091,9 @@ event bulk_budgets (t = RELEASETIME; t <= T0_*end_sim; t += T0_/tout_glo_my) {
   coord divc_a_int1 = {0.,0.,0.}, divc_w_int1 = {0.,0.,0.};
   coord grap_a_int1 = {0.,0.,0.}, grap_w_int1 = {0.,0.,0.};
   coord divu_a_int1 = {0.,0.,0.}, divu_w_int1 = {0.,0.,0.};
-  foreach(reduction(+:divc_a_int1),reduction(+:divc_w_int1),
-          reduction(+:grap_a_int1),reduction(+:grap_w_int1),
-	  reduction(+:divu_a_int1),reduction(+:divu_w_int1)) {
+  foreach(reduction(+:divc_a_int1) reduction(+:divc_w_int1)
+          reduction(+:grap_a_int1) reduction(+:grap_w_int1)
+	  reduction(+:divu_a_int1) reduction(+:divu_w_int1)) {
     //
     double div_con = 0;
     div_con = (u.x[1,0,0]*u.x[1,0,0]-u.x[-1,0,0]*u.x[-1,0,0])/(2.*Delta) +
@@ -1171,8 +1178,8 @@ event bulk_budgets (t = RELEASETIME; t <= T0_*end_sim; t += T0_/tout_glo_my) {
   // --> Pressure power integral, viscous power integral (per phase and for both kinetic and gravitational forces)
   double grap_pa_int = 0., grap_pw_int = 0.;
   double taup_pa_int = 0., taup_pw_int = 0.;
-  foreach(reduction(+:grap_pa_int),reduction(+:grap_pw_int)
-	  reduction(+:taup_pa_int),reduction(+:taup_pw_int)) {
+  foreach(reduction(+:grap_pa_int) reduction(+:grap_pw_int)
+	  reduction(+:taup_pa_int) reduction(+:taup_pw_int)) {
     /*
     coord o = {x,y,z};
     double gr_tot = 0;
@@ -1344,14 +1351,14 @@ event global_obs (t = RELEASETIME; t <= T0_*end_sim; t += T0_/tout_glo_my) {
 
   char name_0[100];
 
-  double stp_eta_0 = 0.0; // it corresponds to 0*Delta 
+  coord stp_eta_0 = {0.,0.,0.}; // it corresponds to 0*Delta 
   double stp_pos_0 = 0.0; // it corresponds to 0*Delta 
   fprintf(stderr, "stp_eta0 for gl. obs. = %.10e\n", stp_pos_0);
   sprintf (name_0, "./budgets/global_obs_ptot_0.out");
   output_global_obs_1 (name_0, i, MAXLEVEL, t, RELEASETIME, eta_m0, cirp_th, k_,
 		       f2 , p, stp_eta_0, stp_pos_0);
 
-  double stp_eta_1 = 0.0; // it corresponds to 4*Delta 
+  coord stp_eta_1 = {0.,0.,0.}; // it corresponds to 0*Delta 
   double stp_pos_1 = my_stp_eta_f2s; // it corresponds to 4*Delta 
   fprintf(stderr, "stp_eta1 for gl. obs. = %.10e\n", stp_pos_1);
   sprintf (name_0, "./budgets/global_obs_ptot_1.out");
@@ -1365,15 +1372,37 @@ event eta_loc (t = RELEASETIME; t <= T0_*end_sim; t += T0_/tout_eta_my) {
   if (do_eta_loc == 1) {
 
     fprintf(stderr, "I output the eta_loc file every t=%.10e\n", T0_/tout_eta_my);
-   
+  
+    scalar Sxx[]; scalar Syy[]; scalar Szz[];
+    scalar Sxy[]; scalar Sxz[]; scalar Syz[];
+    foreach() {
+      double dudx = (u.x[1]     - u.x[-1]    )/(2.*Delta);
+      double dudy = (u.x[0,1]   - u.x[0,-1]  )/(2.*Delta);
+      double dudz = (u.x[0,0,1] - u.x[0,0,-1])/(2.*Delta);
+      double dvdx = (u.y[1]     - u.y[-1]    )/(2.*Delta);
+      double dvdy = (u.y[0,1]   - u.y[0,-1]  )/(2.*Delta);
+      double dvdz = (u.y[0,0,1] - u.y[0,0,-1])/(2.*Delta);
+      double dwdx = (u.z[1]     - u.z[-1]    )/(2.*Delta);
+      double dwdy = (u.z[0,1]   - u.z[0,-1]  )/(2.*Delta);
+      double dwdz = (u.z[0,0,1] - u.z[0,0,-1])/(2.*Delta);
+      Sxx[] = dudx+dudx; 
+      Syy[] = dvdy+dvdy;
+      Szz[] = dwdz+dwdz;
+      Sxy[] = dudy+dvdx;
+      Sxz[] = dudz+dwdx;
+      Syz[] = dvdz+dwdy;
+    }
+    //scalar * list_s = {u.x,u.y,u.z,Sxx,Syy,Szz,Sxy,Sxz,Syz,p};
+    scalar * list_s = {u.x,u.y,u.z,Sxx,Syy,Szz,Sxy,Sxz,Syz,p_hd};
+
     fflush(stderr);
     char eta_out[100];
     sprintf (eta_out, "./eta/eta_loc/eta_loc_t%09d.bin", i);
 
     ///*
-    double stp_eta = 0.0;
+    coord stp_eta = {0.,0.,0.};
     double stp_pos = my_stp_eta_f2s; // it corresponds to 4*Delta on 1024**3
-    output_int_qtn (eta_out, i, MAXLEVEL, t, RELEASETIME, f2s, u, p, stp_eta, stp_pos);
+    output_int_qtn (eta_out, i, MAXLEVEL, t, RELEASETIME, f2s, list_s, stp_eta, stp_pos);
     //*/
 
     /* 
