@@ -475,6 +475,7 @@ event init (i = 0) {
 
   }
   else {
+    p.nodump = false;
     if (restore ("restart.bin")) {
       fprintf(stderr, "Simulation restarts from a dumped file (TWO-PHASE)\n"), fflush (stderr);
     }
@@ -482,6 +483,7 @@ event init (i = 0) {
       fprintf(stderr, "Restarting file for two-phase simulation is absent! Please provide it!\n"), fflush (stderr);
       return 1;
     }
+    p.nodump = true;
   }
    
 }
@@ -1432,7 +1434,9 @@ event dumpstep (t = RELEASETIME; t <= T0_*end_sim; t += T0_/tout_res_my) {
 
   char dname[100];
   sprintf (dname, "dump_%d.bin", counter);
+  p.nodump = false; // we also dump the pressure (it might be useful)
   dump (dname);
+  p.nodump = true;
 
   /** 
      Add a symbolic link, log restarting info and size of the bin */
@@ -1468,7 +1472,9 @@ event dump_backup (t = RELEASETIME; t <= T0_*end_sim; t += T0_/tout_rbk_my) {
   
   char dname[100];
   sprintf (dname, "./restart_bk/dump_%09d.bin", i);
+  p.nodump = false; // we also dump the pressure (it might be useful)
   dump (dname);
+  p.nodump = true;
   
   /** 
      Log restarting info and size of the bin */

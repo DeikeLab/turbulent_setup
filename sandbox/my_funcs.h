@@ -142,8 +142,8 @@ void sliceXY (char * fname, scalar s, double zp, int maxlevel, bool do_linear, b
   }
 
   //fprintf(stderr, "I am here 2\n"), fflush (stderr);
-  FILE * fpver = fopen (fname,"w");
   if (pid() == 0) { // master
+    FILE * fpver = fopen (fname,"w");
 
     // reduce it to the first pid()
 #if _MPI
@@ -167,7 +167,8 @@ void sliceXY (char * fname, scalar s, double zp, int maxlevel, bool do_linear, b
         }
       }
     }
-    fflush(fpver);
+    fflush (fpver);
+    fclose (fpver); // we close at the end
     //fprintf(stderr, "I am here 4\n"), fflush (stderr);
 
   }
@@ -178,7 +179,6 @@ void sliceXY (char * fname, scalar s, double zp, int maxlevel, bool do_linear, b
 #endif
   //fprintf(stderr, "I am here 5\n"), fflush (stderr);
   matrix_free (field);
-  fclose (fpver); // we close at the end
 
 }
 
@@ -354,8 +354,8 @@ void output_2d_span_avg (char * fname, scalar s, int maxlevel, bool do_linear, b
   }
 
   //fprintf(stderr, "I am here 2\n"), fflush (stderr);
-  FILE * fpver = fopen (fname,"w");
   if (pid() == 0) { // master
+    FILE * fpver = fopen (fname,"w");
 
     // reduce it to the first pid()
 #if _MPI
@@ -379,7 +379,8 @@ void output_2d_span_avg (char * fname, scalar s, int maxlevel, bool do_linear, b
         }
       }
     }
-    fflush(fpver);
+    fflush (fpver);
+    fclose (fpver); // we close at the end
     //fprintf(stderr, "I am here 4\n"), fflush (stderr);
 
   }
@@ -391,7 +392,6 @@ void output_2d_span_avg (char * fname, scalar s, int maxlevel, bool do_linear, b
   //fprintf(stderr, "I am here 5\n"), fflush (stderr);
 
   matrix_free (field);
-  fclose (fpver); // we close at the end
 
 }
 
@@ -420,8 +420,8 @@ void output_3d (char * fname, scalar s, int maxlevel, bool do_linear, bool print
     }
   }
 
-  FILE * fpver = fopen (fname,"w");
   if (pid() == 0) { // master
+    FILE * fpver = fopen (fname,"w");
 #if _MPI
     MPI_Reduce (MPI_IN_PLACE, field[0], cube(nn), MPI_DOUBLE, MPI_SUM, 0,
 		MPI_COMM_WORLD);
@@ -445,7 +445,8 @@ void output_3d (char * fname, scalar s, int maxlevel, bool do_linear, bool print
         }
       }
     }
-    fflush(fpver);
+    fflush (fpver);
+    fclose (fpver); // we close at the end
   }
 #if _MPI
   else // slave
@@ -453,7 +454,6 @@ void output_3d (char * fname, scalar s, int maxlevel, bool do_linear, bool print
 		MPI_COMM_WORLD);
 #endif
   matrix_free (field);
-  fclose (fpver); // we close at the end
 
 }
 
@@ -923,8 +923,8 @@ void output_int_qtn (char * fname, int istep, int MAXLEVEL, double time, double 
 	fwrite ( &t_mat_tot[i][j], sizeof(double), 1, fpver );
       }
     }
-    fclose(fpver);
-    fflush(fpver);
+    fclose (fpver);
+    fflush (fpver);
 
     // Log some info about the binary
     char name_1[100];
