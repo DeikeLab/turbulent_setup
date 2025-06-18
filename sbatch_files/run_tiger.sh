@@ -1,7 +1,7 @@
 #!/bin/bash
 #SBATCH --job-name=720_0p3          # create a short name for your job
 #SBATCH --nodes=4                   # node count
-#SBATCH --ntasks-per-node=96        # number of tasks per node
+#SBATCH --ntasks-per-node=40        # number of tasks per node
 #SBATCH --cpus-per-task=1           # cpu-cores per task (>1 if multi-threaded tasks)
 #SBATCH --mem-per-cpu=4G            # memory per cpu-core (4G is default)
 #SBATCH --time=23:59:00             # total run time limit (HH:MM:SS)
@@ -10,8 +10,7 @@
 ####SBATCH --mail-type=end          # send email when job ends
 ####SBATCH --mail-user=ns8802@princeton.edu
 #
-#module load openmpi/gcc/4.1.0
-module load intel-mpi/gcc/2021.3.1
+module load openmpi/gcc/3.1.5/64
 #
 ulimit -s unlimited
 #
