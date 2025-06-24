@@ -20,6 +20,8 @@ rho_r=0.001225;
 mu_r=2.2471881948940954e-06; 
 MAXLEVEL=10;
 MINLEVEL=6;
+prt_res=9;
+RELEASETIME=3.2708e+03;
 #
 DUMP_DIR="restart_bk"
 #
@@ -38,7 +40,7 @@ for dump_file in "$DUMP_DIR"/dump_*.bin; do
     ERR_LOG="err_${file_number}.log"
     
     # Run your code
-    srun windwave_turb -m 23:59:00 "$file_number" "$Re_ast" "$BO" "$Re_wave" "$UstarRATIO" "$r_L0lam" "$rho_r" "$mu_r" "$MAXLEVEL" "$MINLEVEL" > "$OUT_LOG" 2> "$ERR_LOG"
+    srun reprocess -m 23:30:00 "$file_number" "$Re_ast" "$BO" "$Re_wave" "$UstarRATIO" "$r_L0lam" "$rho_r" "$mu_r" "$MAXLEVEL" "$MINLEVEL" "$prt_res" "$RELEASETIME" > "$OUT_LOG" 2> "$ERR_LOG"
 
     # Optionally check for errors
     if [[ $? -ne 0 ]]; then
