@@ -10,6 +10,7 @@ This is the wave wind interaction simulation with logarithmic wind profile and a
 #include "sandbox/colormap.h"
 #include "sandbox/maxruntime.h"  
 #include "sandbox/profile6.h"  
+#include "sandbox/LS_reinit.h"
 #include "sandbox/iso3D.h"  
 
 /** 
@@ -27,6 +28,8 @@ double rho_r = 1.225/1000.0;           // reference density (air)
 double mu_r  = 2.2471881948940954e-06; // reference dynamic viscosity (air)
 int MAXLEVEL = 10;                     // max level of the simulation
 int MINLEVEL = 6;                      // min level of the simulation
+int prt_res = 9;                       // printing resolution
+double RELEASETIME = 1000.;            // releasetime
 
 /**
    We define these values: the wave number, fluid depth, wave period, gravity acceleration,
@@ -47,6 +50,13 @@ double lam_ = 1.0; // we change later
 
 double RHO_RATIO = 1.225/1000.;
 double MU_RATIO  = 18.31e-6/10.0e-4;
+
+/**
+   We define some auxiliary fields:
+   --> the shifted VoFs and the associated variables */
+
+scalar f2s[];
+double my_stp_eta_f2s = 0.1; // we will change later
 
 /**
    Input paramters are passed in from the command line. */
@@ -78,10 +88,14 @@ int main(int argc, char *argv[]) {
     MAXLEVEL = atoi(argv[9]);
   if (argc > 10)
     MINLEVEL = atoi(argv[10]);
+  if (argc > 11)
+    prt_res = atoi(argv[11]);
+  if (argc > 12)
+    RELEASETIME = atof(argv[12]);
   
-  if (argc < 11) {
+  if (argc < 13) {
 
-    fprintf(ferr, "Lack of command line arguments. Check! Need %d more arguments\n", 11-argc);
+    fprintf(ferr, "Lack of command line arguments. Check! Need %d more arguments\n", 13-argc);
     return 1;
 
   }
@@ -99,6 +113,8 @@ int main(int argc, char *argv[]) {
   fprintf(stderr, " Reference dynamic viscosity = %8E\n ", mu_r), fflush (stderr);
   fprintf(stderr, " MAX LEVEL = %d\n ", MAXLEVEL), fflush (stderr);
   fprintf(stderr, " MIN LEVEL = %d\n ", MINLEVEL), fflush (stderr);
+  fprintf(stderr, " prt_res = %d\n ", prt_res), fflush (stderr);
+  fprintf(stderr, " RELEASETIME = %8E\n ", RELEASETIME), fflush (stderr);
   fprintf(stderr, "************************\n"), fflush (stderr);
 
   fprintf(stderr, "double istep = %09E\n", d_istep), fflush (stderr);
@@ -172,13 +188,14 @@ void * matrix_new_3d (int nx, int ny, int nz, size_t size) {
 }
 
 /** 
-   This function prints an entire 3D field linearly interpolated on cartesian and equidistant mesh. */
+   Output a 3d field in a linearly interpolated uniform grid */
 
-void output_3d(char * fname, scalar s, int maxlevel, bool do_linear, bool print_bin) {
+void output_3d (char * fname, scalar s, int maxlevel, bool do_linear, bool print_bin) {
 
-  FILE * fpver = fopen (fname,"w");
+  boundary ({s}); // must be kept since we use interpolate_linear
   int nn = (1<<maxlevel);
   double stp = 0.999999*(L0+X0-X0)/(double)nn; // to avoid interpolated point coincides with fine grid boundary
+
   double ** field = (double **) matrix_new_3d (nn, nn, nn, sizeof(double));
   for (int i = 0; i < nn; i++) {
     double xp = stp*i + X0 + stp/2.;
@@ -190,10 +207,12 @@ void output_3d(char * fname, scalar s, int maxlevel, bool do_linear, bool print_
         foreach_point (xp, yp, zp, serial) {
           val = do_linear ? interpolate_linear (point, s, xp, yp, zp) : s[];
 	}
-	field[i][j*nn+k] = val != nodata ? val : 0.0; 
+        field[i][j*nn+k] = val != nodata ? val : 0.0;
       }
     }
   }
+
+  FILE * fpver = fopen (fname,"w");
   if (pid() == 0) { // master
 #if _MPI
     MPI_Reduce (MPI_IN_PLACE, field[0], cube(nn), MPI_DOUBLE, MPI_SUM, 0,
@@ -218,7 +237,8 @@ void output_3d(char * fname, scalar s, int maxlevel, bool do_linear, bool print_
         }
       }
     }
-    fflush(fpver);
+    fflush (fpver);
+    fclose (fpver); // we close at the end
   }
 #if _MPI
   else // slave
@@ -226,7 +246,6 @@ void output_3d(char * fname, scalar s, int maxlevel, bool do_linear, bool print_
 		MPI_COMM_WORLD);
 #endif
   matrix_free (field);
-  fclose (fpver); // we close at the end
 
 }
 
@@ -285,7 +304,8 @@ void sliceXY_new (char * fname, scalar s, double zp, int maxlevel, bool do_linea
         }
       }
     }
-    fflush(fpver);
+    fflush (fpver);
+    fclose (fpver); // we close at the end
     //fprintf(stderr, "I am here 4\n"), fflush (stderr);
 
   }
@@ -297,7 +317,6 @@ void sliceXY_new (char * fname, scalar s, double zp, int maxlevel, bool do_linea
   //fprintf(stderr, "I am here 5\n"), fflush (stderr);
 
   matrix_free (field);
-  fclose (fpver); // we close at the end
 
 }
 
@@ -357,7 +376,8 @@ void output_2d_span_avg (char * fname, scalar s, int maxlevel, bool do_linear, b
         }
       }
     }
-    fflush(fpver);
+    fflush (fpver);
+    fclose (fpver); // we close at the end
     //fprintf(stderr, "I am here 4\n"), fflush (stderr);
 
   }
@@ -369,56 +389,6 @@ void output_2d_span_avg (char * fname, scalar s, int maxlevel, bool do_linear, b
   //fprintf(stderr, "I am here 5\n"), fflush (stderr);
 
   matrix_free (field);
-  fclose (fpver); // we close at the end
-
-}
-
-void profile_output (vector u,  
-		     vertex scalar phi, int istep, int MAXLEVEL, char * name_pf) {
-
-  scalar omega = new scalar;
-  vorticity (u, omega);
-
-  scalar uv = new scalar; scalar duy = new scalar;
-  scalar diss = new scalar; scalar ke = new scalar;
-  scalar vke = new scalar; scalar dkdy = new scalar;
-  foreach () {
-    double dudx = (u.x[1]     - u.x[-1]    )/(2.*Delta);
-    double dudy = (u.x[0,1]   - u.x[0,-1]  )/(2.*Delta);
-    double dudz = (u.x[0,0,1] - u.x[0,0,-1])/(2.*Delta);
-    double dvdx = (u.y[1]     - u.y[-1]    )/(2.*Delta);
-    double dvdy = (u.y[0,1]   - u.y[0,-1]  )/(2.*Delta);
-    double dvdz = (u.y[0,0,1] - u.y[0,0,-1])/(2.*Delta);
-    double dwdx = (u.z[1]     - u.z[-1]    )/(2.*Delta);
-    double dwdy = (u.z[0,1]   - u.z[0,-1]  )/(2.*Delta);
-    double dwdz = (u.z[0,0,1] - u.z[0,0,-1])/(2.*Delta);
-    double SDeformxx = dudx;
-    double SDeformxy = 0.5*(dudy + dvdx);
-    double SDeformxz = 0.5*(dudz + dwdx);
-    double SDeformyx = SDeformxy;
-    double SDeformyy = dvdy;
-    double SDeformyz = 0.5*(dvdz + dwdy);
-    double SDeformzx = SDeformxz;
-    double SDeformzy = SDeformyz;
-    double SDeformzz = dwdz;
-    double sqterm = 2.*( sq(SDeformxx) + sq(SDeformxy) + sq(SDeformxz) +
-        	         sq(SDeformyx) + sq(SDeformyy) + sq(SDeformyz) +
-      		         sq(SDeformzx) + sq(SDeformzy) + sq(SDeformzz) );
-    uv[]   = u.x[]*u.y[];
-    duy[]  = dudy;
-    diss[] = sqterm;
-    ke[] = 0.0;
-    foreach_dimension() {
-      ke[] += sq(u.x[]);
-    }
-    vke[]  = u.y[]*ke[];
-  }
-  foreach() {
-    dkdy[] = (ke[0,1]-ke[0,-1])/(2.*Delta);
-  }
-
-  profiles ({u.x, u.y, u.z, omega, uv, duy, diss, ke, vke, dkdy, f}, phi, rf = 1.0, fname = name_pf, n = 1 << MAXLEVEL);
-  delete({omega,uv,duy,diss,ke,vke,dkdy});
 
 }
 
@@ -475,39 +445,99 @@ int compare (const void *a, const void *b) {
 
 }
 
+void vof_advection2 (scalar f2, double dt2, face vector uf2, int i) {
+  
+  face vector uf_stored = uf;
+  double dt_stored = dt;
+  uf = uf2;
+  dt = dt2;
+  vof_advection ({f2}, i);
+  dt = dt_stored;
+  uf = uf_stored;
+
+}
+
+/** 
+   Function employed to shift the VoF vertically of my_stp_eta_fs */
+
+void shift_vof (scalar f, coord ufv_fs, int i, double my_stp_eta_fs, double L0, scalar fs) {
+  
+  // We initialize fs with the latest available f
+  scalar_clone(fs,f);
+  foreach() {
+    fs[] = f[];
+  }
+  fs.nodump = true; // we need to put here
+#if TREE
+  fs.refine = fs.prolongation = fraction_refine;
+  restriction({fs});
+#endif
+
+  // We define the shifting velocity
+  face vector uuf_fs[];
+  foreach_face() {
+    uuf_fs.x[] = ufv_fs.x;
+  }
+
+  // We shift fs of my_stp_eta_fs
+  double pdt_max = 0.50*CFL*L0/(1 << grid->maxdepth); // CFL = 0.8 and 0.50*CFL = 0.4, which is good for VoF
+  unsigned int num_min = my_stp_eta_fs/(fabs(ufv_fs.y)*pdt_max);
+  double pdt = my_stp_eta_fs/(1.0*(num_min+1));
+  double yp = 0;
+  int ps_i = 0;
+  while (fabs(yp) < my_stp_eta_fs) {
+    vof_advection2 (fs, pdt, uuf_fs, i);
+    yp += pdt*ufv_fs.y;
+    ps_i++;
+    fprintf(stderr, "translation of the VoF along y. Tmp pos: %g. Pseudo it: %d\n", yp, ps_i);
+  }
+
+}
+
 /**
-   We want to compute some quantities at the interface. */
+   We want to compute some quantities at the interface */
 
-void output_int_qtn (char * fname, int istep, double time, scalar c, scalar p_a, double stp_eta) {
+void output_int_qtn (char * fname, int istep, int MAXLEVEL, double time, double RELEASETIME, 
+		     scalar c, scalar * list, coord stp_eta, double stp_pos) {
 
-  // We first loop over all the interfacial points
+  // Preliminary operation!
+  for (scalar s in list) {
+    boundary ({s}); // must be kept since we use interpolate_linear
+  }
+
+  // We first loop over all the interfacial points 
   // and we count them (per processor)
-
+ 
+  /* 
   int int_pt = 0;
-  foreach(serial) {
+  foreach(serial) { 
     if (interfacial (point, c)) {
-      if (point.level == MAXLEVEL) {
+      //if (point.level == MAXLEVEL) {
         coord n = interface_normal(point, c), pp;
         double alpha1 = plane_alpha (c[], n);
         plane_area_center(n, alpha1, &pp);
         double xc = x + Delta*pp.x;
         double yc = y + Delta*pp.y + stp_eta;
-#if dimension > 2
-        double zc = z + Delta*pp.z; // we keep here to avoid warning (otherwise: unused variable)
-	Point point1 = locate (xc, yc, zc);
-#else
-	Point point1 = locate (xc, yc);
-#endif
-	if (point1.level > 0) {
+        double zc = z + Delta*pp.z;
+	zc *= (dimension - 2);
+	Point point1 = locate (pc.x, pc.y, pc.z);
+	if (point1.level > 0) { // best case
 	  POINT_VARIABLES;
 	  int_pt++;
 	}
-      }
+      //}
+    }
+  }
+  */
+
+  int int_pt = 0;
+  foreach(serial) { 
+    if (interfacial (point, c)) {
+      int_pt++;
     }
   }
 
-  //int tot_column = 21;
-  int tot_column = 18;
+  int tot_column = 8+list_len(list);
   double t_mat[int_pt][tot_column];
 
   for (int j = 0; j < tot_column; j++) {
@@ -519,15 +549,22 @@ void output_int_qtn (char * fname, int istep, double time, scalar c, scalar p_a,
 
   scalar pos[];
 #if dimension > 2
-  coord G = {0.,1.,0.}, Z = {0.,0.,0.};
+  coord G_e = {0.,1.,0.}, Z_e = {0.,0.,0.};
 #else
-  coord G = {0.,1.}, Z = {0.,0.};
+  coord G_e = {0.,1.}, Z_e = {0.,0.};
 #endif
-  position (c, pos, G, Z);
+  position (c, pos, G_e, Z_e);
+
+  foreach() {
+    if(pos[] != nodata) {
+      pos[] -= stp_pos; // we correct pos[] to account for the shift in c;
+    }
+  }
 
   scalar curv[];
   curvature (c, curv);
 
+  /*
   // --> quantities to be probed at the interface
   // n.b.: for the stress we can use u since it contains derivatives
   scalar Sxx[]; scalar Syy[]; scalar Szz[];
@@ -542,20 +579,23 @@ void output_int_qtn (char * fname, int istep, double time, scalar c, scalar p_a,
     double dwdx = (u.z[1]     - u.z[-1]    )/(2.*Delta);
     double dwdy = (u.z[0,1]   - u.z[0,-1]  )/(2.*Delta);
     double dwdz = (u.z[0,0,1] - u.z[0,0,-1])/(2.*Delta);
-    Sxx[] = dudx+dudx;
+    Sxx[] = dudx+dudx; 
     Syy[] = dvdy+dvdy;
     Szz[] = dwdz+dwdz;
     Sxy[] = dudy+dvdx;
     Sxz[] = dudz+dwdx;
     Syz[] = dvdz+dwdy;
   }
-  //boundary({Sxx,Syy,Szz,Sxy,Sxz,Syz}); // must be kept
-  boundary({Sxx,Syy,Szz,Sxy,Sxz,Syz,p_a,u.x,u.y,u.z}); // must be kept
+  boundary ({Sxx,Syy,Szz,Sxy,Sxz,Syz}); // must be kept
+  boundary ({p_a}); // must be kept
+  boundary ((scalar *){u}); // must be kept 
+  */
 
+  /*
   int count = 0;
   foreach(serial) {
     if (interfacial (point, c)) {
-      if (point.level == MAXLEVEL) {
+      //if (point.level == MAXLEVEL) {
         coord n = interface_normal(point, c), pp;
         double alpha1 = plane_alpha (c[], n);
         plane_area_center(n, alpha1, &pp);
@@ -565,32 +605,25 @@ void output_int_qtn (char * fname, int istep, double time, scalar c, scalar p_a,
         double xc = x + Delta*pp.x;
         double yc = y + Delta*pp.y + stp_eta;
         double zc = z + Delta*pp.z;
-#if dimension > 2
-	Point point1 = locate (xc, yc, zc);
-#else
-	Point point1 = locate (xc, yc);
-#endif
-	if (point1.level > 0) {
-
+        zc *= (dimension - 2);
+	Point point1 = locate (pc.x, pc.y, pc.z);
+	if (point1.level > 0) { // best case
+	 
 	  POINT_VARIABLES;
 
 	  t_mat[count][0]  = xc;
-#if dimension > 2
 	  t_mat[count][1]  = zc;
-#else
-	  t_mat[count][1]  = 0;
-#endif
-	  t_mat[count][2]  = my_interpolation(point, p_a, xc, yc, zc);
-	  t_mat[count][3]  = my_interpolation(point, Sxx, xc, yc, zc);
-	  t_mat[count][4]  = my_interpolation(point, Syy, xc, yc, zc);
-	  t_mat[count][5]  = my_interpolation(point, Szz, xc, yc, zc);
-	  t_mat[count][6]  = my_interpolation(point, Sxy, xc, yc, zc);
-	  t_mat[count][7]  = my_interpolation(point, Sxz, xc, yc, zc);
-	  t_mat[count][8]  = my_interpolation(point, Syz, xc, yc, zc);
-	  t_mat[count][9]  = my_interpolation(point, u.x, xc, yc, zc);
-	  t_mat[count][10] = my_interpolation(point, u.y, xc, yc, zc);
+	  t_mat[count][2]  = interpolate_linear(point, p_a, pc.x, pc.y, pc.z);
+	  t_mat[count][3]  = interpolate_linear(point, Sxx, pc.x, pc.y, pc.z);
+	  t_mat[count][4]  = interpolate_linear(point, Syy, pc.x, pc.y, pc.z);
+	  t_mat[count][5]  = interpolate_linear(point, Szz, pc.x, pc.y, pc.z);
+	  t_mat[count][6]  = interpolate_linear(point, Sxy, pc.x, pc.y, pc.z);
+	  t_mat[count][7]  = interpolate_linear(point, Sxz, pc.x, pc.y, pc.z);
+	  t_mat[count][8]  = interpolate_linear(point, Syz, pc.x, pc.y, pc.z);
+	  t_mat[count][9]  = interpolate_linear(point, u.x, pc.x, pc.y, pc.z);
+	  t_mat[count][10] = interpolate_linear(point, u.y, pc.x, pc.y, pc.z);
 #if dimension > 2
-	  t_mat[count][11] = my_interpolation(point, u.z, xc, yc, zc);
+	  t_mat[count][11] = interpolate_linear(point, u.z, pc.x, pc.y, pc.z);
 #else
 	  t_mat[count][11] = 0;
 #endif
@@ -604,21 +637,50 @@ void output_int_qtn (char * fname, int istep, double time, scalar c, scalar p_a,
 	  count++;
 
 	}
-      }
+      //}
+    }
+  }
+  */
+
+  int count = 0;
+  foreach(serial) {
+    if (interfacial (point, c)) {
+      //if (point.level == MAXLEVEL) {
+        coord n = interface_normal(point, c), pp;
+        double alpha1 = plane_alpha (c[], n);
+        plane_area_center(n, alpha1, &pp);
+        coord pc = {0.,0.,0.}, o = {x,y,z};
+	foreach_dimension() {
+          pc.x = o.x + Delta*pp.x + stp_eta.x;
+	}
+	t_mat[count][0] = pc.x;
+	t_mat[count][1] = pc.z;
+	int q = 2;
+	for (scalar s in list) {
+	  t_mat[count][q++] = interpolate_linear(point, s, pc.x, pc.y, pc.z);
+	}
+	t_mat[count][12] = pos[];  // already defined at the interface
+	t_mat[count][13] = curv[]; // already defined at the interface
+	t_mat[count][14] = n.x;    // already defined at the interface
+	t_mat[count][15] = n.y;    // already defined at the interface
+	t_mat[count][16] = n.z;    // already defined at the interface
+	t_mat[count][17] = Delta;  // no interpolation is meaningful
+	count++;
+      //}
     }
   }
   fprintf(stderr, "Second pass over interfacial points\n");
 
-  // We sort locally t_mat by the x coordinate (the first, i.e. 0-th, column)
+  // We sort locally t_mat by the x coordinate (the first, i.e. 0-th, column) 
 
   qsort(t_mat, int_pt, tot_column*sizeof(double), compare);
   fprintf(stderr, "First sort\n");
 
 #if _MPI
 
-  // On multiple cores, we gather all the int_pt to the root pid
+  // On multiple cores, we gather all the int_pt to the root pid 
   // and, then, we broadcast this information to all the processes
-
+  
   int nproc;
   MPI_Comm_size (MPI_COMM_WORLD, &nproc);
   int counts_it[nproc];
@@ -630,8 +692,8 @@ void output_int_qtn (char * fname, int istep, double time, scalar c, scalar p_a,
   }
   MPI_Bcast(counts_it,nproc,MPI_INT,0,MPI_COMM_WORLD);
 
-  // Each processor knows the int_pt of the others. So we can compute
-  // the displacement, the total number of interfacial points and
+  // Each processor knows the int_pt of the others. So we can compute 
+  // the displacement, the total number of interfacial points and 
   // the number of elements owned by each processor
 
   int tot_int_pt = 0;
@@ -643,8 +705,8 @@ void output_int_qtn (char * fname, int istep, double time, scalar c, scalar p_a,
     tot_el_p[i]  = counts_it[i]*tot_column;
   }
 
-  // --> Gather to the root pid
-  // --> Sort by the first column
+  // --> Gather to the root pid 
+  // --> Sort by first column
 
   double t_mat_tot[tot_int_pt][tot_column];
 
@@ -667,11 +729,9 @@ void output_int_qtn (char * fname, int istep, double time, scalar c, scalar p_a,
     }
     MPI_Gatherv(&t_mat,int_pt*tot_column,MPI_DOUBLE,NULL     ,tot_el_p1,disp1,MPI_DOUBLE,0,MPI_COMM_WORLD);
   }
-
+ 
 #else
 
-  int tot_int_pt = int_pt;
-  double t_mat_tot[tot_int_pt][tot_column];
   for (int j = 0; j < tot_column; j++) {
     for (int i = 0; i < int_pt; i++) {
       t_mat_tot[i][j] = t_mat[i][j];
@@ -681,7 +741,7 @@ void output_int_qtn (char * fname, int istep, double time, scalar c, scalar p_a,
 #endif
 
   if (pid() == 0) {
-
+    
     fflush(stderr);
 
     // Print in binary format
@@ -698,12 +758,68 @@ void output_int_qtn (char * fname, int istep, double time, scalar c, scalar p_a,
     char name_1[100];
     sprintf (name_1, "./eta/global_int.out");
     FILE * global_int = fopen (name_1, "a");
-    fprintf (global_int, "%.10e %09d %09d %09d\n",
-		          time, istep, tot_int_pt, tot_column);
+    fprintf (global_int, "%.10e %.10e %09d %09d %09d\n", 
+		          time, time-RELEASETIME, istep, tot_int_pt, tot_column);
     fclose(global_int);
 
   }
   fprintf(stderr, "Print\n");
+
+}
+
+/** 
+   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Define some variables for the profile output */
+
+void profile_output (vector u, scalar p, scalar p_hd, scalar f,
+		     vertex scalar phi, int fsign, double fthr, int set_fthr, 
+		     double ymax, double ymin,
+		     int istep, int MAXLEVEL, char * name_pf) {
+
+  scalar omega = new scalar;
+  vorticity (u, omega);
+
+  scalar uv = new scalar; scalar duy = new scalar;
+  scalar diss = new scalar; scalar ke = new scalar;
+  scalar vke = new scalar; scalar dkdy = new scalar;
+  foreach () {
+    double dudx = (u.x[1]     - u.x[-1]    )/(2.*Delta);
+    double dudy = (u.x[0,1]   - u.x[0,-1]  )/(2.*Delta);
+    double dudz = (u.x[0,0,1] - u.x[0,0,-1])/(2.*Delta);
+    double dvdx = (u.y[1]     - u.y[-1]    )/(2.*Delta);
+    double dvdy = (u.y[0,1]   - u.y[0,-1]  )/(2.*Delta);
+    double dvdz = (u.y[0,0,1] - u.y[0,0,-1])/(2.*Delta);
+    double dwdx = (u.z[1]     - u.z[-1]    )/(2.*Delta);
+    double dwdy = (u.z[0,1]   - u.z[0,-1]  )/(2.*Delta);
+    double dwdz = (u.z[0,0,1] - u.z[0,0,-1])/(2.*Delta);
+    double SDeformxx = dudx;
+    double SDeformxy = 0.5*(dudy + dvdx);
+    double SDeformxz = 0.5*(dudz + dwdx);
+    double SDeformyx = SDeformxy;
+    double SDeformyy = dvdy;
+    double SDeformyz = 0.5*(dvdz + dwdy);
+    double SDeformzx = SDeformxz;
+    double SDeformzy = SDeformyz;
+    double SDeformzz = dwdz;
+    double sqterm = 2.*( sq(SDeformxx) + sq(SDeformxy) + sq(SDeformxz) +
+        	         sq(SDeformyx) + sq(SDeformyy) + sq(SDeformyz) +
+      		         sq(SDeformzx) + sq(SDeformzy) + sq(SDeformzz) );
+    uv[]   = u.x[]*u.y[];
+    duy[]  = dudy;
+    diss[] = sqterm;
+    ke[] = 0.0;
+    foreach_dimension() {
+      ke[] += sq(u.x[]);
+    }
+    vke[]  = u.y[]*ke[];
+  }
+  foreach() {
+    dkdy[] = (ke[0,1]-ke[0,-1])/(2.*Delta);
+  }
+
+  scalar * list_s = {u.x, u.y, u.z, p, p_hd, omega, uv, duy, diss, ke, vke, dkdy, f};
+  profiles (list_s, phi, fname = name_pf, ymax, ymin, f, fsign, fthr, set_fthr,
+	    rf = 1.0, fname = name_pf, n = 1 << MAXLEVEL);
+  delete({omega,uv,duy,diss,ke,vke,dkdy});
 
 }
 
@@ -754,10 +870,44 @@ event init (i = 0) {
     fprintf(stderr, "Restarting files absent! Please provide them!\n"), fflush (stderr);
     return 1;
   }
+  
+  /**
+    Specify the surface elevation shift */
+  
+  my_stp_eta_f2s = 0.1/k_; // following Wu et al. (JFM2022)
 
 }
 
 event end (i = 0; t = t) {
+
+  /**
+     Shift the VoF */
+
+  // We compute the shifted VoF
+  //coord ufv_f1s = {0.,-1.,0.};
+  //shift_vof (f, ufv_f1s, i, my_stp_eta_f1s, L0, f1s);
+  coord ufv_f2s = {0.,+1.,0.};
+  shift_vof (f, ufv_f2s, i, my_stp_eta_f2s, L0, f2s);
+
+  /*
+  // We remove debris from f1s
+  if(do_remove) {
+    remove_droplets (f1s,min_size,threshold,false); // first remove droplets
+    remove_droplets (f1s,min_size,threshold,true ); // then remove bubbles
+  }
+  */
+  
+  // We estimate the total pressure p_hd with the hydrostatic load
+  // Note we need to use f[] to remove the load correctly
+  // Note that p_hd is a continous function at the two-phase interface,
+  // and, therefore, taking its gradient is less noisy
+  scalar phi_1[];
+#if dimension > 2
+  coord Z_hd = {0.,0.,0.};
+#else
+  coord Z_hd = {0.,0.};
+#endif
+  position (f, phi_1, G, Z_hd, add = false);
 
   /**
      Restart from the latest dump files or initialize a new simulation */
@@ -815,6 +965,8 @@ event end (i = 0; t = t) {
 
   fprintf(stderr, "I computed the dissipation\n"), fflush (stderr);
   scalar diss[];
+  scalar Sxx[]; scalar Syy[]; scalar Szz[];
+  scalar Sxy[]; scalar Sxz[]; scalar Syz[];
   foreach () {
     double dudx = (u.x[1]     - u.x[-1]    )/(2.*Delta);
     double dudy = (u.x[0,1]   - u.x[0,-1]  )/(2.*Delta);
@@ -838,103 +990,156 @@ event end (i = 0; t = t) {
         	     sq(SDeformyx) + sq(SDeformyy) + sq(SDeformyz) +
         	     sq(SDeformzx) + sq(SDeformzy) + sq(SDeformzz));
     diss[] = sqterm;
+    
+    //
+    Sxx[] = dudx+dudx; 
+    Syy[] = dvdy+dvdy;
+    Szz[] = dwdz+dwdz;
+    Sxy[] = dudy+dvdx;
+    Sxz[] = dudz+dwdx;
+    Syz[] = dvdz+dwdy;
   }
 
   char filename[100];
-  int res        = 9;
+  int res        = prt_res;
   bool do_linear = true;
   bool print_bin = true;
   
-  ///*
-  int len = 2;
-  double pos[len]; 
-  for (int i = 0; i <= len; i++) {
-    double stp = L0/4.0;
-    pos[i] = -L0/4.0+i*stp;
-  }
-
-  /*
   fprintf(stderr, "I output 3d\n"), fflush (stderr);
   sprintf (filename, "./field_3d/di_3d_%09d.bin", istep); // dissipation
   output_3d (filename, diss , res, do_linear, print_bin);
-  */
-
-  fprintf(stderr, "I make slices\n"), fflush (stderr);
-  for (int s = 0; s <= len; s++) {
-    double stp = pos[s];
-    sprintf (filename, "./slices/ux_2d_%09d_%03d.bin", istep, s); // vel-x
-    sliceXY_new (filename, u.x  , stp, res, do_linear, print_bin);
-    sprintf (filename, "./slices/uy_2d_%09d_%03d.bin", istep, s); // vel-y
-    sliceXY_new (filename, u.y  , stp, res, do_linear, print_bin);
-    sprintf (filename, "./slices/uz_2d_%09d_%03d.bin", istep, s); // vel-z
-    sliceXY_new (filename, u.z  , stp, res, do_linear, print_bin);
-    sprintf (filename, "./slices/di_2d_%09d_%03d.bin", istep, s); // dissipation
-    sliceXY_new (filename, diss , stp, res, do_linear, print_bin);
-    sprintf (filename, "./slices/fv_2d_%09d_%03d.bin", istep, s); // volume of fluid
-    sliceXY_new (filename, f    , stp, res, do_linear, print_bin);
-    sprintf (filename, "./slices/ox_2d_%09d_%03d.bin", istep, s); // vorticity - x
-    sliceXY_new (filename, omg.x, stp, res, do_linear, print_bin);
-    sprintf (filename, "./slices/oy_2d_%09d_%03d.bin", istep, s); // vorticity - y
-    sliceXY_new (filename, omg.y, stp, res, do_linear, print_bin);
-    sprintf (filename, "./slices/oz_2d_%09d_%03d.bin", istep, s); // vorticity - z
-    sliceXY_new (filename, omg.z, stp, res, do_linear, print_bin);
-  }
-  //*/
-  
-  fprintf(stderr, "I make slices spanwise-averaged\n"), fflush (stderr);
-  sprintf (filename, "./field/di_2d_%09d.bin", istep); // dissipation
-  output_2d_span_avg (filename, diss , res, do_linear, print_bin);
-  sprintf (filename, "./field/fv_2d_%09d.bin", istep); // volume of fluid
-  output_2d_span_avg (filename, f    , res, do_linear, print_bin);
-  sprintf (filename, "./field/ox_2d_%09d.bin", istep); // vorticity - x
-  output_2d_span_avg (filename, omg.x, res, do_linear, print_bin);
-  sprintf (filename, "./field/oy_2d_%09d.bin", istep); // vorticity - y
-  output_2d_span_avg (filename, omg.y, res, do_linear, print_bin);
-  sprintf (filename, "./field/oz_2d_%09d.bin", istep); // vorticity - z
-  output_2d_span_avg (filename, omg.z, res, do_linear, print_bin);
+  sprintf (filename, "./field_3d/fv_3d_%09d.bin", istep); // volume-of-fluid
+  output_3d (filename, f    , res, do_linear, print_bin);
+  sprintf (filename, "./field_3d/ux_3d_%09d.bin", istep); // x-velocity
+  output_3d (filename, u.x  , res, do_linear, print_bin);
+  sprintf (filename, "./field_3d/uy_3d_%09d.bin", istep); // y-velocity
+  output_3d (filename, u.y  , res, do_linear, print_bin);
+  sprintf (filename, "./field_3d/uz_3d_%09d.bin", istep); // z-velocity
+  output_3d (filename, u.z  , res, do_linear, print_bin);
 
   // I output eta_loc
-  fprintf(stderr, "I output the eta_loc\n");
   fflush(stderr);
   char eta_out[100];
-  sprintf (eta_out, "./eta/eta_loc/eta_loc_t%09d.bin", i);
-  double stp_eta = 4.0*(L0/pow(2.0,MAXLEVEL)); // it corresponds to 4*Delta
-  output_int_qtn (eta_out, istep, t, f, p, stp_eta);
+  sprintf (eta_out, "./eta/eta_loc/eta_loc_t%09d.bin", istep);
 
-  // We compute the vertical coordinate
+  fprintf(stderr, "I output the eta_loc\n");
+  coord stp_eta = {0.,0.,0.};
+  scalar * list_s = {u.x,u.y,u.z,Sxx,Syy,Szz,Sxy,Sxz,Syz,f2s};
+  double stp_pos = my_stp_eta_f2s; // it corresponds to 4*Delta on 1024**3
+  output_int_qtn (eta_out, istep, MAXLEVEL, t, RELEASETIME, f2s, list_s, stp_eta, stp_pos);
+
+
+  // Profiles
+  fprintf(stderr, "Profiles\n");
+  double eta_m0  = 1.00;
+  double cirp_th = 0.20;
+
+  // We compute the vertical absolute coordinate
   vertex scalar phi_v1[];
   foreach_vertex() {
     phi_v1[] = y;
   }
 
+  // We compute the vertical wave-following coordinate
+  int imax = 512;
+  double y0 = eta_m0; 
+  double delta_min = L0/(1 << grid->maxdepth);
+  scalar phic_v2[];
+  foreach() {
+    phic_v2[] = -(2.*f[] - 1.)*delta_min*0.75;
+  }
+  restriction({phic_v2});
+  phic_v2[top] = neumann(0.);
+  phic_v2[bottom] = neumann(0.);
+  
+  int nint = LS_reinit(phic_v2, it_max = imax);
+  fprintf(stderr, " # of time steps for LS = %d\n ", nint), fflush (stderr);
+  vertex scalar phi_v2[];
+  foreach_vertex() {
+    if ((y-y0) >= -pi/k_ && (y-y0) <= 4.*pi/k_) {
+      phi_v2[]  = y0;
+#if dimension == 2
+      phi_v2[] += ((phic_v2[] + phic_v2[-1] + phic_v2[0,-1] + phic_v2[-1,-1])/4.);
+#else
+      phi_v2[] += (
+        phic_v2[] + phic_v2[-1] + phic_v2[0,-1] + phic_v2[-1,-1] +
+        phic_v2[0,0,-1] + phic_v2[-1,0,-1] + phic_v2[0,-1,-1] + phic_v2[-1,-1,-1]
+      )/8.;
+#endif
+    }
+    else {
+      phi_v2[] = y;
+    }
+  }
+  phi_v2[top] = neumann(0.);
+  phi_v2[bottom] = neumann(0.);
+
+  // We define the extrema of the vertical coordinates
+  scalar pos[];
+#if dimension > 2
+  coord G_e = {0.,1.,0.}, Z_e = {0.,0.,0.};
+#else
+  coord G_e = {0.,1.}, Z_e = {0.,0.};
+#endif
+  position (f, pos, G_e, Z_e);
+  double eta_max = min(statsf(pos).max, eta_m0+cirp_th/1.); // to avoid wild max eta 
+  fprintf(stderr, " eta_max = %8E\n ", eta_max), fflush (stderr);
+  double eta_min = max(statsf(pos).min, eta_m0-cirp_th/1.); // to avoid wild min eta
+  fprintf(stderr, " eta_min = %8E\n ", eta_min), fflush (stderr);
+
+  double eta_avg = 0., area = 0.;
+  foreach(reduction(+:area) reduction(+:eta_avg)) {
+    if(interfacial(point, f)) {
+      coord n      = interface_normal(point, f), pp;
+      double alpha = plane_alpha (f[], n);
+      double ar    = pow(Delta, dimension-1)*plane_area_center (n, alpha, &pp);
+      eta_avg += pos[]*ar;
+      area += ar;	
+    }
+  }
+  eta_avg /= area; 
+  eta_avg = min(eta_avg,eta_m0+cirp_th/2.); // to avoid wild avg eta 
+  fprintf(stderr, " eta_avg (chk 1) = %8E\n ", eta_avg), fflush (stderr);
+  eta_avg = max(eta_avg,eta_m0-cirp_th/2.); // to avoid wild avg eta 
+  fprintf(stderr, " eta_avg (chk 2) = %8E\n ", eta_avg), fflush (stderr);
+
+  double fthr = 1.e-4; // the only free parameter for the abs coordinate
   char file[99];
 
-  fprintf(stderr, "I plot the profiles\n"), fflush (stderr);
-  sprintf (file, "./profiles/prof_%09d_v1.out", istep); // only vertical coordinate
-  profile_output (u, phi_v1, istep, MAXLEVEL, file);
+  sprintf (file, "./profiles/prof_wat_abs_%09d.out", istep); // vertical absolute coordinate
+  profile_output (u, p, p, f, phi_v1, +1, 0.+fthr, 1,
+	          eta_max, Y0, istep, MAXLEVEL, file);
   fflush (stderr);
-  
-  /*
+  sprintf (file, "./profiles/prof_air_abs_%09d.out", istep); // vertical absolute coordinate
+  profile_output (u, p, p, f, phi_v1, -1, 1.-fthr, 1,
+		  L0, eta_min, istep, MAXLEVEL, file);
+  fflush (stderr);
+  sprintf (file, "./profiles/prof_wat_wfc_%09d.out", istep); // vertical wave-following coordinate
+  profile_output (u, p, p, f, phi_v2, +1, 0.+fthr, 0,
+        	  eta_avg, 0., istep, MAXLEVEL, file);
+  fflush (stderr);
+  sprintf (file, "./profiles/prof_air_wfc_%09d.out", istep); // vertical wave-following coordinate
+  profile_output (u, p, p, f, phi_v2, -1, 1.-fthr, 0,
+        	  L0, eta_avg, istep, MAXLEVEL, file);
+  fflush (stderr);
+
   if (pid() == 0) {
   
     char name_1[80];
     sprintf (name_1,"./profiles/log_pro.out");
     FILE * log_sim = fopen(name_1,"a");
-    fprintf (log_sim, "%.10e %.10e\n", t, 1.0*istep);
+    fprintf (log_sim, "%.10e %.10e %d\n", t, t-RELEASETIME, istep);
     fclose(log_sim);
   
   }
-  */
-
-  //return 1;
 
   // To print the time information
   if(pid() == 0) { 
     fflush(stderr);
     char name_1[80];
     sprintf (name_1,"info_restart.out");
-    FILE * log_sim = fopen(name_1,"w");
-    fprintf (log_sim, "%.10e %d\n", t, istep);
+    FILE * log_sim = fopen(name_1, "a");
+    fprintf (log_sim, "%.10e %.10e %d\n", t, t-RELEASETIME, istep);
     fclose(log_sim);
   }
 

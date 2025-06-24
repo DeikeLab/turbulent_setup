@@ -39,18 +39,28 @@ struct ob_av {
   double * v;     // array for the values (mandatory)
   scalar c;       // Volume fractions for the interface (mandatory)
   face vector cs; // Corresponding face fraction field (optional)
+  scalar f;       // Volume fractions to decide in which phase
+  int fsign;      // sign to be applied to ind
+  double fthr;    // threeshold to be applied to fthr
+  int set_fthr;   // set or not threeshold to fthr
 };
 
 double interface_average (struct ob_av oa){
   double area = 0, gs = 0;
-  int j = 0, g = 0, m = list_len (oa.list);
+  int j = 0, g = 0; 
+  int m = list_len (oa.list);
   scalar c = oa.c;
+  scalar f = oa.f;
+  double fsign = 1.*oa.fsign;
+  double fthr = oa.fthr;
+  int set_fthr = oa.set_fthr;
   double * data = oa.v;
   for (scalar s in oa.list)
     oa.v[g++] = 0.;
   foreach(reduction(+:area) reduction(+:j)
 	  reduction(+:gs) reduction (+:data[:m])) {
-    if (c[] > 1e-5 && c[] < 1. - 1e-5) {
+    if (c[] > 1e-5 && c[] < 1. - 1e-5 && 
+        (set_fthr ? fsign*f[] >= fsign*(1.0-fthr) : true)) {
       gs += Delta;
       j++;
       coord n, p[1];
@@ -69,14 +79,6 @@ double interface_average (struct ob_av oa){
 #else
       coord pc = {x + Delta*p->x, y + Delta*p->y, 0.0};
 #endif
-      //Point point1 = locate (pc.x, pc.y, pc.z);
-      /*
-      if (point1.level > 0) {
-        for (scalar s in oa.list) {
-          data[g++] += ar*my_interpolation(point, s, pc.x, pc.y, pc.z);
-        }
-      }
-      */
       for (scalar s in oa.list) {
         data[g++] += ar*interpolate_linear(point, s, pc.x, pc.y, pc.z);
       }
@@ -103,6 +105,10 @@ struct prof {
   char * fname;      // Optional file name 
   double max;        // lower phi coordinate. The default is close to its minimum
   double min;        // upper phi coordinate. The default is close to its maximum
+  scalar ind;        // indicator function
+  int fsign;         // sign to be applied to ind
+  double fthr;       // threeshold for ind
+  int set_fthr;      // set or not the threeshold to fthr
   double rf;         // reduction factor of query heights. The default is 1
   FILE * fp;         // File pointer, if `fname` is not provided. The default is `stdout`
   int n;             // Number of phi-values to query for equidistant profiles
@@ -146,6 +152,9 @@ the `phi` field with the addional `maxdepth` trick of Vincent Heusinkveld.
     }
     p.min = mn + L0/(double)(1 << (grid->maxdepth + 1));
   }
+  else {
+    p.min = p.min + L0/(double)(1 << (grid->maxdepth + 1));
+  }
   if (!p.max){
     double mx = -HUGE;
     foreach_vertex(reduction(max:mx)){
@@ -153,6 +162,9 @@ the `phi` field with the addional `maxdepth` trick of Vincent Heusinkveld.
 	mx = phi[];
     }
     p.max = mx - L0/(double)(1 << (grid->maxdepth + 1));
+  }
+  else {
+    p.max = p.max - L0/(double)(1 << (grid->maxdepth + 1));
   }
   /**
      And by default there is no reduction factor and we print to the
@@ -188,7 +200,9 @@ the `phi` field with the addional `maxdepth` trick of Vincent Heusinkveld.
   while (phi_p < p.max){
     double aver[len];
     fractions (phi, s, sf, val = phi_p);
-    double dphi = interface_average (list, aver, s, sf);
+    double dphi = interface_average (list, aver, s, sf, 
+		                     p.ind, p.fsign, p.fthr, p.set_fthr);
+    //double dphi = interface_average (list, aver, s, sf, p.ind);
     if (pid() == 0){
       int k = 0;
       for (scalar s in list){

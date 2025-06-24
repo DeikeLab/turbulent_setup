@@ -259,8 +259,10 @@ Far from the interface, we use simply the Hamiltonian defined earlier.
   }
 
 
-  boundary({dist});
+  //boundary({dist});
   restriction({dist});
+  dist[top] = neumann(0);
+  dist[bottom] = neumann(0);
 
   return res;
 }
@@ -292,8 +294,9 @@ $$
 $$
 */
   
-  //if(dt == 0) dt = 0.5 * L0/(1 << grid->maxdepth);
-  if(dt == 0) dt = 0.1 * L0/(1 << grid->maxdepth);
+  if(dt == 0) dt = 0.5 * L0/(1 << grid->maxdepth);
+  //if(dt == 0) dt = 0.1 * L0/(1 << grid->maxdepth);
+  //if(dt == 0) dt = 0.10 * L0/(1 << grid->maxdepth);
 
 
 /**
@@ -301,7 +304,7 @@ Default number of iterations is 20 times, which is sufficient to have the first
 10 neighbor cells to the 0-level-set properly redistanced.
 */
 
-  if(it_max == 0)it_max = 100;
+  if(it_max == 0)it_max = 20;
 
   vector gr_LS[];
   int i ;
@@ -320,7 +323,9 @@ iterations.
   foreach(){
     dist0[] = dist[] ;
   }
-  boundary({dist0});
+  //boundary({dist0});
+  dist[top] = neumann(0);
+  dist[bottom] = neumann(0);
 
 /**
  Time integration iteration loop.
@@ -352,12 +357,20 @@ $$
       temp[] = dist[] ;
       temp1[] = dist[] ;
     }
-    boundary({temp,temp1});
+    //boundary({temp,temp1});
+    temp[top] = neumann(0);
+    temp1[top] = neumann(0);
+    temp[bottom] = neumann(0);
+    temp1[bottom] = neumann(0);
+
     ForwardEuler(temp1,temp,dist0,dt);
     foreach(){
       temp2[] = temp1[] ;
     }
-    boundary({temp2});
+    //boundary({temp2});
+    temp2[top] = neumann(0);
+    temp2[bottom] = neumann(0);
+
     ForwardEuler(temp2,temp1,dist0,dt);
 /**
 * Intermediate value
@@ -369,7 +382,11 @@ $$
       temp1[] = 3./4*dist[] + temp2[]/4.;
       temp2[] = temp1[];
     }
-    boundary({temp1,temp2});
+    //boundary({temp1,temp2});
+    temp1[top] = neumann(0);
+    temp2[top] = neumann(0);
+    temp1[bottom] = neumann(0);
+    temp2[bottom] = neumann(0);
 
 /**
 * Step 3
@@ -388,8 +405,12 @@ $$
       res = max(res, 2./3.*fabs(dist[] - temp2[]));
       dist[] = dist[]/3. + temp2[]*2./3.;
     }
-    boundary({dist});
+    //boundary({dist});
     restriction({dist});
+    dist[top] = neumann(0);
+    dist[bottom] = neumann(0);
+
+
 /**
 Iterations are stopped when $L_1 = max(|\phi_i^{n+1}-\phi_i^n|) < eps$
 */
@@ -399,7 +420,6 @@ Iterations are stopped when $L_1 = max(|\phi_i^{n+1}-\phi_i^n|) < eps$
   }
   return it_max;
 }
-
 
 /**
 ## References
