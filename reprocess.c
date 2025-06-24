@@ -1000,6 +1000,7 @@ event end (i = 0; t = t) {
     Syz[] = dvdz+dwdy;
   }
 
+  /*
   char filename[100];
   int res        = prt_res;
   bool do_linear = true;
@@ -1016,6 +1017,7 @@ event end (i = 0; t = t) {
   output_3d (filename, u.y  , res, do_linear, print_bin);
   sprintf (filename, "./field_3d/uz_3d_%09d.bin", istep); // z-velocity
   output_3d (filename, u.z  , res, do_linear, print_bin);
+  */
 
   // I output eta_loc
   fflush(stderr);
