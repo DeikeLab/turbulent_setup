@@ -768,7 +768,7 @@ void output_int_qtn (char * fname, int istep, int MAXLEVEL, double time, double 
 }
 
 /** 
-   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Define some variables for the profile output */
+   Define some variables for the profile output */
 
 void profile_output (vector u, scalar p, scalar p_hd, scalar f,
 		     vertex scalar phi, int fsign, double fthr, int set_fthr, 
@@ -1000,25 +1000,22 @@ event end (i = 0; t = t) {
     Syz[] = dvdz+dwdy;
   }
 
-  /*
   char filename[100];
   int res        = prt_res;
   bool do_linear = true;
   bool print_bin = true;
-  
+ 
   fprintf(stderr, "I output 3d\n"), fflush (stderr);
-  sprintf (filename, "./field_3d/di_3d_%09d.bin", istep); // dissipation
-  output_3d (filename, diss , res, do_linear, print_bin);
-  sprintf (filename, "./field_3d/fv_3d_%09d.bin", istep); // volume-of-fluid
-  output_3d (filename, f    , res, do_linear, print_bin);
-  sprintf (filename, "./field_3d/ux_3d_%09d.bin", istep); // x-velocity
-  output_3d (filename, u.x  , res, do_linear, print_bin);
-  sprintf (filename, "./field_3d/uy_3d_%09d.bin", istep); // y-velocity
-  output_3d (filename, u.y  , res, do_linear, print_bin);
-  sprintf (filename, "./field_3d/uz_3d_%09d.bin", istep); // z-velocity
-  output_3d (filename, u.z  , res, do_linear, print_bin);
-  */
+  sprintf (filename, "./slices/fv_2d_%09d.bin", istep); // volume-of-fluid
+  sliceXY_new (filename, f    , 0., res, do_linear, print_bin);
+  sprintf (filename, "./slices/ux_2d_%09d.bin", istep); // x-velocity
+  sliceXY_new (filename, u.x  , 0., res, do_linear, print_bin);
+  sprintf (filename, "./slices/uy_2d_%09d.bin", istep); // y-velocity
+  sliceXY_new (filename, u.y  , 0., res, do_linear, print_bin);
+  sprintf (filename, "./slices/uz_2d_%09d.bin", istep); // z-velocity
+  sliceXY_new (filename, u.z  , 0., res, do_linear, print_bin);
 
+  /*
   // I output eta_loc
   fflush(stderr);
   char eta_out[100];
@@ -1029,7 +1026,6 @@ event end (i = 0; t = t) {
   scalar * list_s = {u.x,u.y,u.z,Sxx,Syy,Szz,Sxy,Sxz,Syz,f2s};
   double stp_pos = my_stp_eta_f2s; // it corresponds to 4*Delta on 1024**3
   output_int_qtn (eta_out, istep, MAXLEVEL, t, RELEASETIME, f2s, list_s, stp_eta, stp_pos);
-
 
   // Profiles
   fprintf(stderr, "Profiles\n");
@@ -1043,7 +1039,7 @@ event end (i = 0; t = t) {
   }
 
   // We compute the vertical wave-following coordinate
-  int imax = 512;
+  int imax = 1024;
   double y0 = eta_m0; 
   double delta_min = L0/(1 << grid->maxdepth);
   scalar phic_v2[];
@@ -1058,7 +1054,7 @@ event end (i = 0; t = t) {
   fprintf(stderr, " # of time steps for LS = %d\n ", nint), fflush (stderr);
   vertex scalar phi_v2[];
   foreach_vertex() {
-    if ((y-y0) >= -pi/k_ && (y-y0) <= 4.*pi/k_) {
+    if ((y-y0) >= -pi/k_ && (y-y0) <= 2.*pi/k_) {
       phi_v2[]  = y0;
 #if dimension == 2
       phi_v2[] += ((phic_v2[] + phic_v2[-1] + phic_v2[0,-1] + phic_v2[-1,-1])/4.);
@@ -1124,6 +1120,7 @@ event end (i = 0; t = t) {
   profile_output (u, p, p, f, phi_v2, -1, 1.-fthr, 0,
         	  L0, eta_avg, istep, MAXLEVEL, file);
   fflush (stderr);
+  */
 
   if (pid() == 0) {
   
