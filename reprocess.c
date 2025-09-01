@@ -321,6 +321,78 @@ void sliceXY_new (char * fname, scalar s, double zp, int maxlevel, bool do_linea
 }
 
 
+void sliceYZ_new (char * fname, scalar s, double xp, int maxlevel, bool do_linear, bool print_bin) {
+
+  boundary ({s}); // must be kept since we use interpolate_linear
+  int nn = (1<<maxlevel);
+  double stp = 0.999999*(L0+X0-X0)/(double)nn; // to avoid interpolated point coincides with fine grid boundary
+
+  //fprintf(stderr, "I am here 1\n"), fflush (stderr);
+  double ** field = (double **) matrix_new (nn, nn, sizeof(double));
+  for (int i = 0; i < nn; i++) {
+    double yp = stp*i + Y0 + stp/2.;
+    for (int j = 0; j < nn; j++) {
+      double zp = stp*j + Z0 + stp/2.;
+      field[i][j] = 0.0;
+      for (int k = 0; k < nn; k++) {
+        double xp = stp*k + X0 + stp/2.;
+        double val = nodata;
+        foreach_point (xp, yp, zp, serial) {
+          val = do_linear ? interpolate_linear (point, s, xp, yp, zp) : s[];
+        }
+        field[i][j] = val != nodata ? val : 0.0;
+        /*
+        if (val != nodata) {
+          field[i][j] += val/(double)nn;
+        }
+        */
+      }
+    }
+  }
+
+  //fprintf(stderr, "I am here 2\n"), fflush (stderr);
+  FILE * fpver = fopen (fname,"w");
+  if (pid() == 0) { // master
+
+  // reduce it to the first pid()
+#if _MPI
+    MPI_Reduce (MPI_IN_PLACE, field[0], sq(nn), MPI_DOUBLE, MPI_SUM, 0,
+                MPI_COMM_WORLD);
+#endif
+
+    // print
+    if(print_bin) { // print in binary format
+      for (int i = 0; i < nn; i++) {
+        for (int j = 0; j < nn; j++) {
+          fwrite ( &field[i][j], sizeof(double), 1, fpver );
+        }
+      }
+    }
+    else { // print in ascii format
+      for (int i = 0; i < nn; i++) {
+        for (int j = 0; j < nn; j++) {
+          fprintf(fpver, "%8E", field[i][j]);
+          fputc('\n', fpver);  // not double quotation""
+        }
+      }
+    }
+    fflush (fpver);
+    fclose (fpver); // we close at the end
+    //fprintf(stderr, "I am here 4\n"), fflush (stderr);
+
+  }
+#if _MPI
+  else // slave
+    MPI_Reduce (field[0], NULL, sq(nn), MPI_DOUBLE, MPI_SUM, 0,
+                MPI_COMM_WORLD);
+#endif
+  //fprintf(stderr, "I am here 5\n"), fflush (stderr);
+
+  matrix_free (field);
+
+}
+
+
 void output_2d_span_avg (char * fname, scalar s, int maxlevel, bool do_linear, bool print_bin) {
 
   boundary ({s}); // must be kept since we use interpolate_linear
@@ -1007,11 +1079,11 @@ event end (i = 0; t = t) {
  
   fprintf(stderr, "I output 3d\n"), fflush (stderr);
   sprintf (filename, "./slices/fv_2d_%09d.bin", istep); // volume-of-fluid
-  sliceXY_new (filename, f    , 0., res, do_linear, print_bin);
+  sliceYZ_new (filename, f    , 0., res, do_linear, print_bin);
   sprintf (filename, "./slices/ux_2d_%09d.bin", istep); // x-velocity
-  sliceXY_new (filename, u.x  , 0., res, do_linear, print_bin);
+  sliceYZ_new (filename, u.x  , 0., res, do_linear, print_bin);
   sprintf (filename, "./slices/uy_2d_%09d.bin", istep); // y-velocity
-  sliceXY_new (filename, u.y  , 0., res, do_linear, print_bin);
+  sliceYZ_new (filename, u.y  , 0., res, do_linear, print_bin);
   sprintf (filename, "./slices/uz_2d_%09d.bin", istep); // z-velocity
   sliceXY_new (filename, u.z  , 0., res, do_linear, print_bin);
 

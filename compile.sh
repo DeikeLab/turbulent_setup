@@ -1,5 +1,5 @@
 #
-module load intel-mpi/gcc/2021.3.1
+module load intel-mpi/gcc/2021.15
 mkdir -p reprocess
 #
 # compile
