@@ -249,75 +249,59 @@ void output_3d (char * fname, scalar s, int maxlevel, bool do_linear, bool print
 
 }
 
+// ---------- SAFER XY SLICE (z = zp) ----------
 void sliceXY_new (char * fname, scalar s, double zp, int maxlevel, bool do_linear, bool print_bin) {
+  boundary ({s}); // required if we may interpolate
+  const int nn  = (1 << maxlevel);
+  const double stp = 0.999999 * L0 / (double) nn;
 
-  boundary ({s}); // must be kept since we use interpolate_linear
-  int nn = (1<<maxlevel);
-  double stp = 0.999999*(L0+X0-X0)/(double)nn; // to avoid interpolated point coincides with fine grid boundary
+  // Wrap zp into [Z0, Z0+L0) in case of periodic z
+  while (zp <  Z0)      zp += L0;
+  while (zp >= Z0+L0)   zp -= L0;
 
-  //fprintf(stderr, "I am here 1\n"), fflush (stderr);
-  double ** field = (double **) matrix_new (nn, nn, sizeof(double));
+  double **field = (double **) matrix_new (nn, nn, sizeof(double));
+
   for (int i = 0; i < nn; i++) {
-    double xp = stp*i + X0 + stp/2.;
+    const double xp = X0 + (i + 0.5)*stp;
     for (int j = 0; j < nn; j++) {
-      double yp = stp*j + Y0 + stp/2.;
-      field[i][j] = 0.0;
-      for (int k = 0; k < nn; k++) {
-        double zp = stp*k + Z0 + stp/2.;
-        double val = nodata;
-        foreach_point (xp, yp, zp, serial) {
-          val = do_linear ? interpolate_linear (point, s, xp, yp, zp) : s[];
-	}
-	field[i][j] = val != nodata ? val : 0.0; 
-	/*
-	if (val != nodata) {
-          field[i][j] += val/(double)nn;
-	}
-	*/
+      const double yp = Y0 + (j + 0.5)*stp;
+
+      double val = nodata;
+      foreach_point (xp, yp, zp, serial) {
+        if (do_linear && is_leaf(cell))
+          val = interpolate_linear(point, s, xp, yp, zp);
+        else
+          val = s[];
       }
+      field[i][j] = (val != nodata) ? val : 0.0;
     }
   }
 
-  //fprintf(stderr, "I am here 2\n"), fflush (stderr);
-  FILE * fpver = fopen (fname,"w");
-  if (pid() == 0) { // master
-
-  // reduce it to the first pid()
+  FILE *fpver = fopen(fname, "w");
+  if (!fpver) { perror("fopen sliceXY_new"); }
+  if (pid() == 0 && fpver) {
 #if _MPI
-    MPI_Reduce (MPI_IN_PLACE, field[0], sq(nn), MPI_DOUBLE, MPI_SUM, 0,
-		MPI_COMM_WORLD);
+    MPI_Reduce (MPI_IN_PLACE, field[0], sq(nn), MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
 #endif
-
-    // print
-    if(print_bin) { // print in binary format
-      for (int i = 0; i < nn; i++) {
-        for (int j = 0; j < nn; j++) {
-	  fwrite ( &field[i][j], sizeof(double), 1, fpver );
-        }
-      }
+    if (print_bin) {
+      for (int i = 0; i < nn; i++)
+        for (int j = 0; j < nn; j++)
+          fwrite(&field[i][j], sizeof(double), 1, fpver);
+    } else {
+      for (int i = 0; i < nn; i++)
+        for (int j = 0; j < nn; j++)
+          fprintf(fpver, "% .8E\n", field[i][j]);
     }
-    else { // print in ascii format
-      for (int i = 0; i < nn; i++) {
-        for (int j = 0; j < nn; j++) {
-          fprintf(fpver, "%8E", field[i][j]);
-          fputc('\n', fpver);  // not double quotation""
-        }
-      }
-    }
-    fflush (fpver);
-    fclose (fpver); // we close at the end
-    //fprintf(stderr, "I am here 4\n"), fflush (stderr);
-
+    fflush(fpver);
+    fclose(fpver);
   }
 #if _MPI
-  else // slave
-    MPI_Reduce (field[0], NULL, sq(nn), MPI_DOUBLE, MPI_SUM, 0,
-		MPI_COMM_WORLD);
+  else {
+    MPI_Reduce (field[0], NULL, sq(nn), MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
+  }
 #endif
-  //fprintf(stderr, "I am here 5\n"), fflush (stderr);
 
-  matrix_free (field);
-
+  matrix_free(field);
 }
 
 
@@ -325,6 +309,7 @@ void sliceYZ_new (char * fname, scalar s, double xp, int maxlevel, bool do_linea
 
   boundary ({s}); // must be kept since we use interpolate_linear
   int nn = (1<<maxlevel);
+  
   double stp = 0.999999*(L0+X0-X0)/(double)nn; // to avoid interpolated point coincides with fine grid boundary
 
   //fprintf(stderr, "I am here 1\n"), fflush (stderr);
@@ -333,20 +318,20 @@ void sliceYZ_new (char * fname, scalar s, double xp, int maxlevel, bool do_linea
     double yp = stp*i + Y0 + stp/2.;
     for (int j = 0; j < nn; j++) {
       double zp = stp*j + Z0 + stp/2.;
-      field[i][j] = 0.0;
-      for (int k = 0; k < nn; k++) {
-        double xp = stp*k + X0 + stp/2.;
-        double val = nodata;
-        foreach_point (xp, yp, zp, serial) {
+      //field[i][j] = 0.0;
+      //for (int k = 0; k < nn; k++) {
+        //double xp = stp*k + X0 + stp/2.;
+      double val = nodata;
+      foreach_point (xp, yp, zp, serial) {
           val = do_linear ? interpolate_linear (point, s, xp, yp, zp) : s[];
-        }
-        field[i][j] = val != nodata ? val : 0.0;
+      }
+      field[i][j] = val != nodata ? val : 0.0;
         /*
         if (val != nodata) {
           field[i][j] += val/(double)nn;
         }
         */
-      }
+     
     }
   }
 
@@ -392,75 +377,145 @@ void sliceYZ_new (char * fname, scalar s, double xp, int maxlevel, bool do_linea
 
 }
 
+void sliceYZ_avgx_masked (char * fname, scalar s, scalar f,
+                          int maxlevel, bool do_linear, bool print_bin,
+                          int nx_samples, double f_thresh, char * cov_fname)
+{
+  boundary ({s});
+  if (f.i) boundary ({f}); // mask exists
 
-void output_2d_span_avg (char * fname, scalar s, int maxlevel, bool do_linear, bool print_bin) {
+  const int nn = (1 << maxlevel);
+  const double stp_y = 0.999999 * L0 / (double) nn;
+  const double stp_z = 0.999999 * L0 / (double) nn;
 
-  boundary ({s}); // must be kept since we use interpolate_linear
-  int nn = (1<<maxlevel);
-  double stp = 0.999999*(L0+X0-X0)/(double)nn; // to avoid interpolated point coincides with fine grid boundary
+  if (nx_samples <= 0) nx_samples = (1 << maxlevel); // be mindful: res=10 -> 1024
+  const double stp_x = L0 / (double) nx_samples;
 
-  //fprintf(stderr, "I am here 1\n"), fflush (stderr);
-  double ** field = (double **) matrix_new (nn, nn, sizeof(double));
+  // Accumulators: mean = sum(s*w), sumw = sum(w)
+  double **mean = (double **) matrix_new (nn, nn, sizeof(double));
+  double **sumw = (double **) matrix_new (nn, nn, sizeof(double));
+  for (int i = 0; i < nn; i++)
+    for (int j = 0; j < nn; j++)
+      mean[i][j] = sumw[i][j] = 0.0;
+
+  // Loop over YZ pixels
   for (int i = 0; i < nn; i++) {
-    double xp = stp*i + X0 + stp/2.;
+    const double yp = Y0 + (i + 0.5) * stp_y;
     for (int j = 0; j < nn; j++) {
-      double yp = stp*j + Y0 + stp/2.;
-      field[i][j] = 0.0;
-      for (int k = 0; k < nn; k++) {
-        double zp = stp*k + Z0 + stp/2.;
-        double val = nodata;
-        foreach_point (xp, yp, zp, serial) {
-          val = do_linear ? interpolate_linear (point, s, xp, yp, zp) : s[];
-	}
-	field[i][j] += val != nodata ? val/(double)nn : 0.0; 
-	/*
-	if (val != nodata) {
-          field[i][j] += val/(double)nn;
-	}
-	*/
+      const double zp = Z0 + (j + 0.5) * stp_z;
+
+      double acc = 0.0, wacc = 0.0;
+
+      // Sample along x
+      for (int kx = 0; kx < nx_samples; kx++) {
+        double xq = X0 + (kx + 0.5) * stp_x;
+
+        double sval = nodata;
+        double fval = 1.0; // default: no mask
+
+        foreach_point (xq, yp, zp, serial) {
+          // Interpolate s if requested; avoid linear interp on non-leaf cells for robustness
+          if (do_linear) {
+            if (is_leaf (cell))
+              sval = interpolate_linear (point, s, xq, yp, zp);
+            else
+              sval = s[];
+          } else {
+            sval = s[];
+          }
+          // NEVER interpolate VOF (discontinuous); use cell value
+          if (f.i) fval = f[];
+        }
+        if (sval == nodata) continue; // outside coverage on this rank
+
+        // Clamp f to [0,1] defensively
+        if (f.i) {
+          if (fval < 0.0) fval = 0.0;
+          if (fval > 1.0) fval = 1.0;
+        }
+
+        // Weight from VOF
+        double w = 1.0;
+        if (f.i) {
+          if (f_thresh < 0.0) {
+            // Continuous weight: proportional contribution of mixed cells
+            if      (fval <= 0.0) w = 0.0;
+            else if (fval >= 1.0) w = 1.0;
+            else                  w = fval;
+          } else {
+            // Hard threshold: exclude interface band
+            if      (fval >= 1.0 - f_thresh) w = 1.0; // water
+            else if (fval <= f_thresh)       w = 0.0; // air
+            else continue;                              // skip interface
+          }
+        }
+
+        if (w > 0.0) { acc += sval * w; wacc += w; }
       }
+
+      mean[i][j] = acc;   // sum(s*w)
+      sumw[i][j] = wacc;  // sum(w)
     }
   }
 
-  //fprintf(stderr, "I am here 2\n"), fflush (stderr);
-  FILE * fpver = fopen (fname,"w");
-  if (pid() == 0) { // master
-
-  // reduce it to the first pid()
+// --- MPI reduction of accumulators ---
 #if _MPI
-    MPI_Reduce (MPI_IN_PLACE, field[0], sq(nn), MPI_DOUBLE, MPI_SUM, 0,
-		MPI_COMM_WORLD);
+if (pid() == 0) {
+  // Root rank: reduce in-place into mean/sumw
+  MPI_Reduce(MPI_IN_PLACE, mean[0], sq(nn), MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
+  MPI_Reduce(MPI_IN_PLACE, sumw[0], sq(nn), MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
+} else {
+  // Non-root ranks: send buffers; recvbuf must be NULL
+  MPI_Reduce(mean[0], NULL,    sq(nn), MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
+  MPI_Reduce(sumw[0], NULL,    sq(nn), MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
+}
 #endif
 
-    // print
-    if(print_bin) { // print in binary format
-      for (int i = 0; i < nn; i++) {
-        for (int j = 0; j < nn; j++) {
-	  fwrite ( &field[i][j], sizeof(double), 1, fpver );
-        }
-      }
-    }
-    else { // print in ascii format
-      for (int i = 0; i < nn; i++) {
-        for (int j = 0; j < nn; j++) {
-          fprintf(fpver, "%8E", field[i][j]);
-          fputc('\n', fpver);  // not double quotation""
-        }
-      }
-    }
-    fflush (fpver);
-    fclose (fpver); // we close at the end
-    //fprintf(stderr, "I am here 4\n"), fflush (stderr);
+if (pid() == 0) {
+  // Convert accumulators -> averaged field (in-place on 'mean')
+  for (int i = 0; i < nn; i++)
+    for (int j = 0; j < nn; j++)
+      mean[i][j] = (sumw[i][j] > 0.0) ? (mean[i][j] / sumw[i][j]) : 0.0;
 
+  // Write averaged field
+  FILE *fp = fopen (fname, "w");
+  if (!fp) perror("fopen avg file");
+  else {
+    if (print_bin) {
+      for (int i = 0; i < nn; i++)
+        for (int j = 0; j < nn; j++)
+          fwrite (&mean[i][j], sizeof(double), 1, fp);
+    } else {
+      for (int i = 0; i < nn; i++)
+        for (int j = 0; j < nn; j++)
+          fprintf (fp, "% .8E\n", mean[i][j]);
+    }
+    fflush (fp);
+    fclose (fp);
   }
-#if _MPI
-  else // slave
-    MPI_Reduce (field[0], NULL, sq(nn), MPI_DOUBLE, MPI_SUM, 0,
-		MPI_COMM_WORLD);
-#endif
-  //fprintf(stderr, "I am here 5\n"), fflush (stderr);
 
-  matrix_free (field);
+  // Optionally write coverage (sum of weights along x)
+  if (cov_fname) {
+    FILE *fc = fopen (cov_fname, "w");
+    if (!fc) perror("fopen coverage file");
+    else {
+      if (print_bin) {
+        for (int i = 0; i < nn; i++)
+          for (int j = 0; j < nn; j++)
+            fwrite (&sumw[i][j], sizeof(double), 1, fc);
+      } else {
+        for (int i = 0; i < nn; i++)
+          for (int j = 0; j < nn; j++)
+            fprintf (fc, "% .8E\n", sumw[i][j]);
+      }
+      fflush (fc);
+      fclose (fc);
+    }
+  }
+}
+
+matrix_free (mean);
+matrix_free (sumw);
 
 }
 
@@ -953,26 +1008,14 @@ event init (i = 0) {
 event end (i = 0; t = t) {
 
   /**
-     Shift the VoF */
-
-  // We compute the shifted VoF
-  //coord ufv_f1s = {0.,-1.,0.};
-  //shift_vof (f, ufv_f1s, i, my_stp_eta_f1s, L0, f1s);
-  coord ufv_f2s = {0.,+1.,0.};
+   * Shift the VOF as requested (positive y-direction here)
+   */
+  coord ufv_f2s = {0., +1., 0.};
   shift_vof (f, ufv_f2s, i, my_stp_eta_f2s, L0, f2s);
 
-  /*
-  // We remove debris from f1s
-  if(do_remove) {
-    remove_droplets (f1s,min_size,threshold,false); // first remove droplets
-    remove_droplets (f1s,min_size,threshold,true ); // then remove bubbles
-  }
-  */
-  
-  // We estimate the total pressure p_hd with the hydrostatic load
-  // Note we need to use f[] to remove the load correctly
-  // Note that p_hd is a continous function at the two-phase interface,
-  // and, therefore, taking its gradient is less noisy
+  /**
+   * Hydrostatic reference position (phi_1) based on VOF
+   */
   scalar phi_1[];
 #if dimension > 2
   coord Z_hd = {0.,0.,0.};
@@ -982,63 +1025,63 @@ event end (i = 0; t = t) {
   position (f, phi_1, G, Z_hd, add = false);
 
   /**
-     Restart from the latest dump files or initialize a new simulation */
-
+   * Quick diagnostics / views
+   */
   vector omg[];
   vorticity3D (u, omg);
+
   scalar u_x[], omgy[], omgz[], omg_mod[];
   foreach() {
-    u_x[]  = u.x[]/Ustar;
-    omgz[] = omg.z[]/(2.0*pi/T0_);
-    omg_mod[] = 0;
-    foreach_dimension() {
+    u_x[]   = u.x[]/Ustar;
+    omgz[]  = omg.z[]/(2.0*pi/T0_);
+    omg_mod[] = 0.;
+    foreach_dimension()
       omg_mod[] += sq(omg.x[]/(2.0*pi/T0_));
-    }
     omg_mod[] = sqrt(omg_mod[]);
   }
-  boundary ({u_x,omgz,omg.x,omg.y,omg.z}); // must be kept?
-  boundary ({omg_mod}); // must be kept?
-  fprintf(stderr, "Min omg_mod = %8E\n", statsf(omg_mod).min), fflush (stderr);
-  fprintf(stderr, "Max omg_mod = %8E\n", statsf(omg_mod).max), fflush (stderr);
-  
-  fprintf(stderr, "Simulation restarts from a dumped file (TWO-PHASE)\n"), fflush (stderr);
+  boundary ({u_x, omgz, omg.x, omg.y, omg.z});
+  boundary ({omg_mod});
+  fprintf(stderr, "Min omg_mod = %8E\n", statsf(omg_mod).min), fflush(stderr);
+  fprintf(stderr, "Max omg_mod = %8E\n", statsf(omg_mod).max), fflush(stderr);
+
+  fprintf(stderr, "Simulation restarts from a dumped file (TWO-PHASE)\n"), fflush(stderr);
   clear();
-  view (fov = 27.5,
-        theta = pi/4.0, phi = pi/50.0, psi = 0.0, ty = -0.5,
+  view (fov = 27.5, theta = pi/4.0, phi = pi/50.0, psi = 0.0, ty = -0.5,
         width = 1300, height = 1300, bg = {1,1,1}, samples = 4);
   box(false, lc = {1,1,1}, lw = 0.1);
   draw_vof ("f", color = "u.x");
   squares ("u_x" , linear = true, min = -2.0 , max = 20.0, n = {0,0,1}, alpha = -L0/2.0, map = rain_cm);
   squares ("omgz", linear = true, min = -60.0, max = 30.0, n = {1,0,0}, alpha = -L0/2.0, map = balance_cm);
-  //squares ("omg_mod", linear = true, min = 0.0, max = 100.0, n = {1,0,0}, alpha = -L0/2.0, map = balance_cm);
-  char name_1[80];
-  sprintf (name_1, "3D_%d.ppm", istep);
   {
+    char name_1[80];
+    sprintf (name_1, "3D_%d.ppm", istep);
     static FILE * fp = fopen (name_1, "a");
     save (fp = fp);
     fflush (fp);
   }
 
-  fprintf(stderr, "I computed the dissipation\n"), fflush (stderr);
+  fprintf(stderr, "I computed the dissipation\n"), fflush(stderr);
   clear();
   view (fov = 10.5, camera = "front", ty = -0.2,
         width = 1300, height = 1300, bg = {1,1,1}, samples = 4);
   box(false, lc = {1,1,1}, lw = 0.1);
-  //draw_vof ("f", color = "u.x");
   isoline2 ("f", val = 0.5, alpha = 1e-4, lc = {1,0,1}, lw = 3);
   squares ("u_x" , linear = true, min = -2.0 , max = 20.0, n = {0,0,1}, alpha = 1e-4, map = rain_cm);
   cells(n={0,0,1}, alpha = 1e-4);
-  sprintf (name_1, "zoom_vel_%d.ppm", istep);
   {
+    char name_1[80];
+    sprintf (name_1, "zoom_vel_%d.ppm", istep);
     static FILE * fp = fopen (name_1, "a");
     save (fp = fp);
     fflush (fp);
   }
 
-  fprintf(stderr, "I computed the dissipation\n"), fflush (stderr);
+  /**
+   * Simple strain/“dissipation” proxy and stresses (if needed later)
+   */
+  fprintf(stderr, "I computed the dissipation\n"), fflush(stderr);
   scalar diss[];
-  scalar Sxx[]; scalar Syy[]; scalar Szz[];
-  scalar Sxy[]; scalar Sxz[]; scalar Syz[];
+  scalar Sxx[], Syy[], Szz[], Sxy[], Sxz[], Syz[];
   foreach () {
     double dudx = (u.x[1]     - u.x[-1]    )/(2.*Delta);
     double dudy = (u.x[0,1]   - u.x[0,-1]  )/(2.*Delta);
@@ -1058,155 +1101,112 @@ event end (i = 0; t = t) {
     double SDeformzx = SDeformxz;
     double SDeformzy = SDeformyz;
     double SDeformzz = dwdz; 
-    double sqterm = (sq(SDeformxx) + sq(SDeformxy) + sq(SDeformxz) +
-        	     sq(SDeformyx) + sq(SDeformyy) + sq(SDeformyz) +
-        	     sq(SDeformzx) + sq(SDeformzy) + sq(SDeformzz));
+    double sqterm = ( sq(SDeformxx) + sq(SDeformxy) + sq(SDeformxz)
+                    + sq(SDeformyx) + sq(SDeformyy) + sq(SDeformyz)
+                    + sq(SDeformzx) + sq(SDeformzy) + sq(SDeformzz) );
     diss[] = sqterm;
-    
-    //
-    Sxx[] = dudx+dudx; 
-    Syy[] = dvdy+dvdy;
-    Szz[] = dwdz+dwdz;
+
+    Sxx[] = 2.*dudx; 
+    Syy[] = 2.*dvdy;
+    Szz[] = 2.*dwdz;
     Sxy[] = dudy+dvdx;
     Sxz[] = dudz+dwdx;
     Syz[] = dvdz+dwdy;
   }
 
-  char filename[100];
-  int res        = prt_res;
-  bool do_linear = true;
-  bool print_bin = true;
- 
-  fprintf(stderr, "I output 3d\n"), fflush (stderr);
-  sprintf (filename, "./slices/fv_2d_%09d.bin", istep); // volume-of-fluid
-  sliceYZ_new (filename, f    , 0., res, do_linear, print_bin);
-  sprintf (filename, "./slices/ux_2d_%09d.bin", istep); // x-velocity
-  sliceYZ_new (filename, u.x  , 0., res, do_linear, print_bin);
-  sprintf (filename, "./slices/uy_2d_%09d.bin", istep); // y-velocity
-  sliceYZ_new (filename, u.y  , 0., res, do_linear, print_bin);
-  sprintf (filename, "./slices/uz_2d_%09d.bin", istep); // z-velocity
-  sliceXY_new (filename, u.z  , 0., res, do_linear, print_bin);
+  /**
+   * Field outputs
+   */
+  char filename[100], covname[256];
+  const int res        = prt_res;
+  const bool print_bin = true;
 
-  /*
-  // I output eta_loc
-  fflush(stderr);
-  char eta_out[100];
-  sprintf (eta_out, "./eta/eta_loc/eta_loc_t%09d.bin", istep);
+  // Update halos before sampling
+  boundary ({f});
+  boundary ((scalar *){u});
 
-  fprintf(stderr, "I output the eta_loc\n");
-  coord stp_eta = {0.,0.,0.};
-  scalar * list_s = {u.x,u.y,u.z,Sxx,Syy,Szz,Sxy,Sxz,Syz,f2s};
-  double stp_pos = my_stp_eta_f2s; // it corresponds to 4*Delta on 1024**3
-  output_int_qtn (eta_out, istep, MAXLEVEL, t, RELEASETIME, f2s, list_s, stp_eta, stp_pos);
+  // --- Thin 2D slices (YZ at x = 0; XY at z = 0) ---
+// VOF: never interpolate (robust near interface)
+fprintf(stderr, "[thin] fv YZ start\n"), fflush(stderr);
+sprintf (filename, "./slices/fv_2d_%09d.bin", istep);
+sliceYZ_new (filename, f,   /*xp=*/0., res, /*do_linear=*/false, print_bin);
+fprintf(stderr, "[thin] fv YZ done\n"), fflush(stderr);
 
-  // Profiles
-  fprintf(stderr, "Profiles\n");
-  double eta_m0  = 1.00;
-  double cirp_th = 0.20;
+// Velocities: linear interpolation is fine
+fprintf(stderr, "[thin] ux YZ start\n"), fflush(stderr);
+sprintf (filename, "./slices/ux_2d_%09d.bin", istep);
+sliceYZ_new (filename, u.x, /*xp=*/0., res, /*do_linear=*/true,  print_bin);
+fprintf(stderr, "[thin] ux YZ done\n"), fflush(stderr);
 
-  // We compute the vertical absolute coordinate
-  vertex scalar phi_v1[];
-  foreach_vertex() {
-    phi_v1[] = y;
-  }
+fprintf(stderr, "[thin] uy YZ start\n"), fflush(stderr);
+sprintf (filename, "./slices/uy_2d_%09d.bin", istep);
+sliceYZ_new (filename, u.y, /*xp=*/0., res, /*do_linear=*/true,  print_bin);
+fprintf(stderr, "[thin] uy YZ done\n"), fflush(stderr);
 
-  // We compute the vertical wave-following coordinate
-  int imax = 1024;
-  double y0 = eta_m0; 
-  double delta_min = L0/(1 << grid->maxdepth);
-  scalar phic_v2[];
-  foreach() {
-    phic_v2[] = -(2.*f[] - 1.)*delta_min*0.75;
-  }
-  restriction({phic_v2});
-  phic_v2[top] = neumann(0.);
-  phic_v2[bottom] = neumann(0.);
-  
-  int nint = LS_reinit(phic_v2, it_max = imax);
-  fprintf(stderr, " # of time steps for LS = %d\n ", nint), fflush (stderr);
-  vertex scalar phi_v2[];
-  foreach_vertex() {
-    if ((y-y0) >= -pi/k_ && (y-y0) <= 2.*pi/k_) {
-      phi_v2[]  = y0;
-#if dimension == 2
-      phi_v2[] += ((phic_v2[] + phic_v2[-1] + phic_v2[0,-1] + phic_v2[-1,-1])/4.);
-#else
-      phi_v2[] += (
-        phic_v2[] + phic_v2[-1] + phic_v2[0,-1] + phic_v2[-1,-1] +
-        phic_v2[0,0,-1] + phic_v2[-1,0,-1] + phic_v2[0,-1,-1] + phic_v2[-1,-1,-1]
-      )/8.;
-#endif
-    }
-    else {
-      phi_v2[] = y;
-    }
-  }
-  phi_v2[top] = neumann(0.);
-  phi_v2[bottom] = neumann(0.);
 
-  // We define the extrema of the vertical coordinates
-  scalar pos[];
-#if dimension > 2
-  coord G_e = {0.,1.,0.}, Z_e = {0.,0.,0.};
-#else
-  coord G_e = {0.,1.}, Z_e = {0.,0.};
-#endif
-  position (f, pos, G_e, Z_e);
-  double eta_max = min(statsf(pos).max, eta_m0+cirp_th/1.); // to avoid wild max eta 
-  fprintf(stderr, " eta_max = %8E\n ", eta_max), fflush (stderr);
-  double eta_min = max(statsf(pos).min, eta_m0-cirp_th/1.); // to avoid wild min eta
-  fprintf(stderr, " eta_min = %8E\n ", eta_min), fflush (stderr);
+fprintf(stderr, "[thin] uz XY start\n"), fflush(stderr);
+sprintf (filename, "./slices/uz_2d_%09d.bin", istep);
+// prueba: do_linear=false aquí
+sliceYZ_new (filename, u.z, /*zp=*/0., res, /*do_linear=*/false,  print_bin);
+fprintf(stderr, "[thin] uz XY done\n"), fflush(stderr);
 
-  double eta_avg = 0., area = 0.;
-  foreach(reduction(+:area) reduction(+:eta_avg)) {
-    if(interfacial(point, f)) {
-      coord n      = interface_normal(point, f), pp;
-      double alpha = plane_alpha (f[], n);
-      double ar    = pow(Delta, dimension-1)*plane_area_center (n, alpha, &pp);
-      eta_avg += pos[]*ar;
-      area += ar;	
-    }
-  }
-  eta_avg /= area; 
-  eta_avg = min(eta_avg,eta_m0+cirp_th/2.); // to avoid wild avg eta 
-  fprintf(stderr, " eta_avg (chk 1) = %8E\n ", eta_avg), fflush (stderr);
-  eta_avg = max(eta_avg,eta_m0-cirp_th/2.); // to avoid wild avg eta 
-  fprintf(stderr, " eta_avg (chk 2) = %8E\n ", eta_avg), fflush (stderr);
 
-  double fthr = 1.e-4; // the only free parameter for the abs coordinate
-  char file[99];
+// --- Spanwise averages along x for YZ planes ---
+fprintf(stderr, "I output YZ <·>_x\n"), fflush(stderr);
+const int NX_SAMPLES = 256; // choose 64–256; avoid 0 (which would default to 2^res)
 
-  sprintf (file, "./profiles/prof_wat_abs_%09d.out", istep); // vertical absolute coordinate
-  profile_output (u, p, p, f, phi_v1, +1, 0.+fthr, 1,
-	          eta_max, Y0, istep, MAXLEVEL, file);
-  fflush (stderr);
-  sprintf (file, "./profiles/prof_air_abs_%09d.out", istep); // vertical absolute coordinate
-  profile_output (u, p, p, f, phi_v1, -1, 1.-fthr, 1,
-		  L0, eta_min, istep, MAXLEVEL, file);
-  fflush (stderr);
-  sprintf (file, "./profiles/prof_wat_wfc_%09d.out", istep); // vertical wave-following coordinate
-  profile_output (u, p, p, f, phi_v2, +1, 0.+fthr, 0,
-        	  eta_avg, 0., istep, MAXLEVEL, file);
-  fflush (stderr);
-  sprintf (file, "./profiles/prof_air_wfc_%09d.out", istep); // vertical wave-following coordinate
-  profile_output (u, p, p, f, phi_v2, -1, 1.-fthr, 0,
-        	  L0, eta_avg, istep, MAXLEVEL, file);
-  fflush (stderr);
-  */
+// VOF averaged along x (no interpolation)
+fprintf(stderr, "[avgx] fv start\n"), fflush(stderr);
+sprintf(filename, "./slices/fv_avgx_yz_%09d.bin", istep);
+sprintf(covname , "./slices/fv_cov_yz_%09d.bin",  istep);
+sliceYZ_avgx_masked(filename, /*s=*/f, /*mask=*/f, res,
+                    /*do_linear=*/false, /*print_bin=*/true,
+                    /*nx_samples=*/NX_SAMPLES, /*f_thresh=*/-1.0,
+                    /*cov_fname=*/covname);
+fprintf(stderr, "[avgx] fv done\n"), fflush(stderr);
 
+// u.x averaged along x (masked by water)
+fprintf(stderr, "[avgx] ux start\n"), fflush(stderr);
+sprintf(filename, "./slices/ux_avgx_yz_%09d.bin", istep);
+sprintf(covname , "./slices/ux_cov_yz_%09d.bin",  istep);
+sliceYZ_avgx_masked(filename, u.x, f, res,
+                    /*do_linear=*/true,  /*print_bin=*/true,
+                    /*nx_samples=*/NX_SAMPLES, /*f_thresh=*/-1.0,
+                    /*cov_fname=*/covname);
+fprintf(stderr, "[avgx] ux done\n"), fflush(stderr);
+
+// u.y averaged along x (masked by water)
+fprintf(stderr, "[avgx] uy start\n"), fflush(stderr);
+sprintf(filename, "./slices/uy_avgx_yz_%09d.bin", istep);
+sprintf(covname , "./slices/uy_cov_yz_%09d.bin",  istep);
+sliceYZ_avgx_masked(filename, u.y, f, res,
+                    /*do_linear=*/true,  /*print_bin=*/true,
+                    /*nx_samples=*/NX_SAMPLES, /*f_thresh=*/-1.0,
+                    /*cov_fname=*/covname);
+fprintf(stderr, "[avgx] uy done\n"), fflush(stderr);
+
+// u.z averaged along x (masked by water)
+fprintf(stderr, "[avgx] uz start\n"), fflush(stderr);
+sprintf(filename, "./slices/uz_avgx_yz_%09d.bin", istep);
+sprintf(covname , "./slices/uz_cov_yz_%09d.bin",  istep);
+sliceYZ_avgx_masked(filename, u.z, f, res,
+                    /*do_linear=*/true,  /*print_bin=*/true,
+                    /*nx_samples=*/NX_SAMPLES, /*f_thresh=*/-1.0,
+                    /*cov_fname=*/covname);
+fprintf(stderr, "[avgx] uz done\n"), fflush(stderr);
+
+  /**
+   * Simple run logs
+   */
   if (pid() == 0) {
-  
     char name_1[80];
     sprintf (name_1,"./profiles/log_pro.out");
     FILE * log_sim = fopen(name_1,"a");
     fprintf (log_sim, "%.10e %.10e %d\n", t, t-RELEASETIME, istep);
     fclose(log_sim);
-  
   }
 
-  // To print the time information
-  if(pid() == 0) { 
-    fflush(stderr);
+  if (pid() == 0) { 
     char name_1[80];
     sprintf (name_1,"info_restart.out");
     FILE * log_sim = fopen(name_1, "a");
@@ -1214,6 +1214,6 @@ event end (i = 0; t = t) {
     fclose(log_sim);
   }
 
+  // Return 1 to stop after this postprocess event (single-shot run)
   return 1;
-
 }
