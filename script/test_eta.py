@@ -9,7 +9,7 @@ from my_funcs import get_amp, interp_2d;
 tot_row = 18;
 work_dir  = "/home/nn8802/Documents/simulation/basilisk_dotc_turb/windwave_turb/";
 #
-istep   = 30838;
+istep   = 31046;
 istep_c = f'{istep:09d}';
 etalo = np.fromfile(work_dir+'eta/eta_loc/eta_loc_t'+istep_c+'.bin')
 size  = etalo.shape;
@@ -26,14 +26,15 @@ zpo = etalo[:,1];
 x_int = np.linspace(-L0/2,L0/2,N,endpoint=False)+L0/N/2;
 z_int = np.linspace(-L0/2,L0/2,N,endpoint=False)+L0/N/2;
 x_til, z_til = np.meshgrid(x_int,z_int);
+#plt.contourf(xpo,zpo,eta)
 eta_int = interp_2d(xpo, zpo, x_til, z_til, eta);
 pre_int = interp_2d(xpo, zpo, x_til, z_til, pre);
-#plt.contourf(x_til,z_til,eta_int)
-plt.contourf(x_til,z_til,pre_int-np.average(pre_int))
-#plt.plot(x_int,np.average(eta_int,axis=0));
-#plt.plot(x_int,eta_int[1])
+#plt.contourf(x_til,z_til,eta_int,200)
+#plt.contourf(x_til,z_til,pre_int-np.average(pre_int),200)
+plt.plot(x_int,np.average(pre_int-np.average(pre_int),axis=0));
+plt.plot(x_int,eta_int[1])
 #
 
 
 #
-ak = get_amp(eta_int,k,L0);
+#ak = get_amp(eta_int,k,L0);

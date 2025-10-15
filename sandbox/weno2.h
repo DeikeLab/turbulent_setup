@@ -23,3 +23,4 @@ static inline double WENOdiff_x(Point point, scalar s, int i){
   double s2 = (s[1,0,0] + s[-1,0,0] - 2*s[])/Delta;
   return i*((s[i,0,0] - s[])/Delta -my_minmod(s1,s2)/2.);
 }
+

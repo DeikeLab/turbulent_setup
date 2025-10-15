@@ -5,13 +5,6 @@ import numpy as np
 from scipy.interpolate import griddata, interp1d
 from scipy.signal import savgol_filter
 #
-def phase_partion(ux,uy,f,s1_exp,s2_exp):
-    ux_air   = ux*(1.0-f)**s1_exp
-    ux_water = ux*f**(1/s2_exp)
-    uy_air   = uy*(1.0-f)**s1_exp
-    uy_water = uy*f**(1/s2_exp)
-    return ux_air,ux_water,uy_air,uy_water
-#
 def interp_2d(xdata,zdata,xtile,ztile,fld):
     #
     fld_int = griddata((xdata.ravel(), zdata.ravel()), fld.ravel(), (xtile, ztile), method='nearest');
@@ -20,46 +13,90 @@ def interp_2d(xdata,zdata,xtile,ztile,fld):
 #
 def load_bin(pfile,N,is_2d):
     #
+    snapshot = np.fromfile(pfile, dtype=np.float64);
     if is_2d == 1:
-      snapshot = np.fromfile(pfile, dtype=np.float64);
       snapshot = snapshot.reshape([N,N]);
-      snapshot = np.transpose(snapshot);
     else:
-      snapshot = np.fromfile(pfile, dtype=np.float64);
       snapshot = snapshot.reshape([N,N,N]);
-      snapshot = np.transpose(snapshot);
+    snapshot = np.transpose(snapshot);
     #
     return snapshot;
 #
-def return_file(common_path,name,istep,N,is_2d):
+def return_field(common_path,name,istep,N,is_2d,span_avg,pos):
     #
     if is_2d == 1:
-      pfile = common_path+'field/'+name+'_2d_avg_'+istep+'.bin';
-      file  = load_bin(pfile,N,is_2d);
+      if span_avg == 1:
+        pfile = common_path+'field/'+name+'_2d_avg_'+istep+'.bin';
+      else: 
+        pfile = common_path+'slices/'+name+'_2d_'+pos+'_'+istep+'.bin';
     else:
-      pfile = common_path+'field/'+name+'_3d_'+istep+'.bin';
-      file  = load_bin(pfile,N,is_2d);
+        pfile = common_path+'field/'+name+'_3d_'+istep+'.bin';
     #
-    return file;
+    field = load_bin(pfile,N,is_2d);
+    #
+    return field;
 #
-def cart_to_wf(p_2d,eta_1d,N,L0,k_,eta_m0):
+def split_profile(p_2D,count_wat,count_air,N,i_dir):
     #
-    # note p is 2d (in the x, z), eta is 1d (only x)
+    p_wat_2D_wf = p_2D[0:count_wat,:];
+    p_air_2D_wf = p_2D[count_wat:N,:];
+    p_wat_1D_wf = np.average(p_wat_2D_wf,i_dir);
+    p_air_1D_wf = np.average(p_air_2D_wf,i_dir);
     #
-    eta_1d      = eta_1d;         # the mean has been already subtracted
-    p_2d_interp = np.zeros([N,N])
-    zplot       = np.zeros([N,N]) # To show in the original cartesian grid z where the interpolating grid z' is
-    for i in range(N): # For each x
-      #
-      z        = np.linspace(-eta_m0,L0-eta_m0,N,endpoint=False);
-      f        = interp1d(z,p_2d[i,:],kind='quadratic',fill_value = "extrapolate");
-      zeta     = z;
-      zplot[i] = zeta + eta_1d[i]*np.exp(-k_*np.abs(zeta));
-      p_2d_interp[i] = f(zplot[i]);
-      #
-    p_1d_interp = np.average(p_2d_interp,axis=-1); # average along the x direction
+    if(count_wat+count_air != N):
+        print("Warning in split profile");
     #
-    return p_2d_interp, p_1d_interp, zplot, zeta
+    return p_wat_1D_wf,p_air_1D_wf;
+#
+# Define different mapping functions
+#
+def mapping_function_1(xi, eta_x, mean_interface_position, L0, k_):
+    #
+    z_mapped_water = xi[xi <= mean_interface_position] * eta_x  # Scale water phase from 0 to eta(x)
+    z_mapped_air = eta_x + (xi[xi > mean_interface_position] - mean_interface_position) * (L0 - eta_x) / (L0 - mean_interface_position)
+    #
+    return np.concatenate((z_mapped_water, z_mapped_air))
+
+def mapping_function_2(xi, eta_x, mean_interface_position, L0, k_):
+    #
+    z_mapped_water = xi[xi <= mean_interface_position] * eta_x**0.8  # Non-linear scaling for water
+    z_mapped_air = eta_x + (xi[xi > mean_interface_position] - mean_interface_position) * (L0 - eta_x)**0.5 / ((L0 - mean_interface_position)**0.5)
+    #
+    return np.concatenate((z_mapped_water, z_mapped_air))
+
+def mapping_function_3(xi, eta_x, mean_interface_position, L0, k_):
+    #
+    z_mapped_water = xi[xi <= mean_interface_position] * eta_x  # Scale water phase linearly from 0 to eta(x)
+    z_mapped_air = eta_x + (xi[xi > mean_interface_position] - mean_interface_position) * (L0 - eta_x) / (L0 - mean_interface_position)
+    #
+    return np.concatenate((z_mapped_water, z_mapped_air))
+
+def mapping_function_4(xi, eta_x, mean_interface_position, L0, k_):
+    #
+    sigma = 5e-3;
+    #
+    return xi + (eta_x-mean_interface_position)*np.exp(-sigma*k_*np.abs(xi));
+#
+# Function to perform the field transformation based on the chosen mapping
+#
+def transform_to_wave_following(p_2D_cart, eta, x, z, mapping_func, N, L0, k_):
+    #
+    p_2D_cart = np.transpose(p_2D_cart);
+    xi = np.linspace(0, L0, N)  # Define xi over the full range
+    p_2D_wave_following = np.zeros((N, N))  # Initialize transformed field
+    mean_interface_position = np.mean(eta)  # Compute mean interface position
+    #
+    for i in range(N):
+        # Use the eta array value at the current x position
+        eta_x = eta[i]
+       
+        # Apply the chosen mapping function to get z_mapped
+        z_mapped = mapping_func(xi, eta_x, mean_interface_position, L0, k_)
+       
+        # Interpolate the field using the mapped z values
+        p_2D_wave_following[i, :] = np.interp(z_mapped, z, p_2D_cart[i, :])
+    #
+    return np.transpose(p_2D_wave_following), xi
 #
 def mom_flux_p(pre,nx,ny,nz):
     #
@@ -140,6 +177,8 @@ def ene_flux_v(Sxx,Sxy,Sxz,Syy,Syz,Szz,u_x,u_y,u_z,nx,ny,nz,mu2):
 #
 def get_amp(eta,k,L0):
     #
-    ak = k*( (2/(L0**2))*np.std( (eta[:])**2) )**0.5;
+    eta2  = np.sqrt(np.mean(eta[:])**2); # mean square slope 
+    akrms = k*( (2/(L0**2))*np.std( (eta[:])**2) )**0.5; # amplitude rms
+    akpp  = k*0.5*(eta[:].max()-eta[:].min()); # amplitude peak-to-peak
     #
-    return ak
+    return eta2,akrms,akpp

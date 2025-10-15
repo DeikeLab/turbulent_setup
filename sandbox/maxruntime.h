@@ -17,11 +17,12 @@ and the program terminates. */
 
 static double _maxruntime = HUGE;
 
-event runtime (i += 5) {
+event runtime (i++) {
   mpi_all_reduce (perf.t, MPI_DOUBLE, MPI_MAX);
-  if (perf.t >= _maxruntime - 300) { // we allow 5 minutes for termination
-    //dump (file = "restart"); // so that we can restart
+  if (perf.t >= _maxruntime - 900) { // we allow 15 minutes for termination
+    p.nodump = false;
     dump (file = "restart.bin"); // so that we can restart
+    p.nodump = true;
     return 1; // exit
   }
 }

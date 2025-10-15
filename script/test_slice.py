@@ -13,16 +13,16 @@ from matplotlib import pyplot as plt
 L0 = 2.0*np.pi;
 N = 512;
 tot_row = 18;
-istep = 30838;
+istep = 30837;
 istep_c = f'{istep:09d}'
 pos = 1;
 pos_c = f'{pos:03d}'
 work_dir  = "/home/nn8802/Documents/simulation/basilisk_dotc_turb/windwave_turb/";
-#ux_bin = np.fromfile(work_dir+'slices/ux_2d_'+istep_c+'_'+pos_c+'.bin');
-uxA_bin = np.fromfile(work_dir+'field/ux_2d_avg_'+istep_c+'.bin');
+uxA_bin = np.fromfile(work_dir+'slices/oy_2d_'+pos_c+'_'+istep_c+'.bin');
+#uxA_bin = np.fromfile(work_dir+'field/oy_2d_avg_'+istep_c+'.bin');
 uxA_bin = np.transpose(uxA_bin.reshape([N, N]));
-#fv_bin = np.fromfile(work_dir+'slices/fv_2d_'+istep_c+'_'+pos_c+'.bin');
-fvA_bin = np.fromfile(work_dir+'field/fv_2d_avg_'+istep_c+'.bin');
+fvA_bin = np.fromfile(work_dir+'slices/fv_2d_'+pos_c+'_'+istep_c+'.bin');
+#fvA_bin = np.fromfile(work_dir+'field/fv_2d_avg_'+istep_c+'.bin');
 fvA_bin = np.transpose(fvA_bin.reshape([N, N]));
 #
 x_int = np.linspace(-L0/2,L0/2,N,endpoint=False)+L0/N/2;
