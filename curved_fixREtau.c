@@ -1484,6 +1484,12 @@ event eta_loc (t = RELEASETIME; t <= T0_*end_sim; t += T0_/tout_eta_my) {
     fflush(stderr);
     char eta_out[100];
 
+    // old eta_loc_t behavior
+    coord stp_eta_t = {0.,0.,0.};
+    double stp_pos_t = my_stp_eta_f2s;
+    sprintf (eta_out, "./eta/eta_loc/eta_loc_t%09d.bin", i);
+    output_int_qtn (eta_out, i, MAXLEVEL, t, RELEASETIME, f2s, list_s, stp_eta_t, stp_pos_t, 1);
+    
     coord stp_eta1 = {0.,0.,0.};
     double stp_pos1 = my_stp_eta_f2s; // it corresponds to 4*Delta on 1024**3
     sprintf (eta_out, "./eta/eta_loc/eta_loc_p1_t%09d.bin", i);

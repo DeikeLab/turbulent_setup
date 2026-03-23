@@ -1,6 +1,10 @@
 #
 #module load intel-mpi/gcc/2021.3.1
-module load openmpi/gcc/4.1.6
+module purge
+module load intel-oneapi/2024.2
+module load intel-mpi/oneapi/2021.13
+module load intel-tbb/2021.13 intel-rt/2024.2
+
 rm -rf windwave_turb && mkdir -p windwave_turb
 mkdir -p windwave_turb
 #
