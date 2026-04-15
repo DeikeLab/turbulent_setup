@@ -1,3 +1,20 @@
+@if _XOPEN_SOURCE < 700
+  @undef _XOPEN_SOURCE
+  @define _XOPEN_SOURCE 700
+@endif
+@if _GNU_SOURCE
+@include <stdint.h>
+@include <string.h>
+@include <fenv.h>
+@endif
+#define _CATCH
+#define dimension 3
+#define BGHOSTS 2
+#include "common.h"
+#include "grid/octree.h"
+#ifndef BASILISK_HEADER_0
+#define BASILISK_HEADER_0
+#line 1 "curved_fixREtau.c"
 /** 
    This is the wave wind interaction simulation with logarithmic wind profile and adaptive grid. 
    This is a turbulent configuration. */
@@ -6,15 +23,17 @@
 #include "two-phase.h"
 #include "navier-stokes/conserving.h"
 #include "tension.h"
-#include "reduced.h"
+#include "reduced.h"  // reduced gravity
 #include "view.h"
 #include "tag.h"
-#include "sandbox/profile6.h"   // From Antoon (modified to handle absolute and wave-following coordinates)
+#include "sandbox/redistance2.h"
+#include "sandbox/basic_funcs.h"   
+#include "sandbox/profile6.h"   // From Antoon
 #include "sandbox/my_funcs.h"   
 #include "sandbox/maxruntime.h"  
 #include "sandbox/colormap.h"
 #include "sandbox/iso3D.h"
-#include "sandbox/LS_reinit.h"
+//#include "sandbox/perfs.h"   
 
 /** 
    Input parameters of the simulations. 
@@ -37,13 +56,9 @@ double end_sim = 1000;                 // end of the simulation (physical time u
 int do_eta_loc = 1;                    // output or not eta_loc
 int do_profile = 1;                    // output or not profiles
 int do_fields  = 1;                    // output or not fields
-int do_slices  = 1;                    // output or not slices
 int do_tagging = 1;                    // output or not tagging
 int prt_res = 9;                       // printing resolution
 int from_pr = 1;                       // from precursor simulation
-int st_wave = 1;                       // use or not a Stokes wave
-int MY_RAND = 2;                       // MY_RAND number (important if st_wave = 0)
-int N_mod = 192;                       // number of modes to create the spectrum (important if st_wave = 0)
 
 /**
    We define these values: the wave number, fluid depth, wave period, gravity acceleration,
@@ -80,13 +95,13 @@ double eta_m0    = 1.0;    // initial mean eta0
 
 double tout_glo_my = 64.0; // output frequency of global observables
 double tout_tag_my = 64.0; // output frequency of tagging
-double tout_eta_my = 64.0; // output frequency of interfacial quantity
-double tout_fld_my = 16.0; // output frequency of fields
-double tout_pro_my = 16.0; // output frequency of 1d profile
+double tout_eta_my = 32.0; // output frequency of interfacial quantity
+double tout_fld_my = 32.0; // output frequency of fields
+double tout_pro_my = 32.0; // output frequency of 1d profile
 double tout_mov_my = 4.00; // output frequency of the movie
 double tout_res_my = 4.00; // output frequency of restart
-double tout_cut_my = 4.00; // output frequency of some 2D cuts (keep <<tout_cut_my>> equal to <<tout_rbk_my>> for future reuse)
-double tout_rbk_my = 4.00; // output frequency of the backup restarting files (keep <<tout_rbk_my>> equal to <<tout_cut_my>> for future reuse)
+double tout_cut_my = 2.00; // output frequency of some 2D cuts (keep <<tout_cut_my>> equal to <<tout_rbk_my>> for future reuse)
+double tout_rbk_my = 2.00; // output frequency of the backup restarting files (keep <<tout_rbk_my>> equal to <<tout_cut_my>> for future reuse)
 
 /**
    For the restarting step. */
@@ -167,23 +182,15 @@ int main(int argc, char *argv[]) {
   if (argc > 16)
     do_fields  = atoi(argv[16]); // do_fields  = 1 --> true, else --> false
   if (argc > 17)
-    do_slices  = atoi(argv[17]); // do_slices  = 1 --> true, else --> false
+    do_tagging = atoi(argv[17]); // do_tagging = 1 --> true, else --> false
   if (argc > 18)
-    do_tagging = atoi(argv[18]); // do_tagging = 1 --> true, else --> false
+    prt_res    = atoi(argv[18]); 
   if (argc > 19)
-    prt_res    = atoi(argv[19]); 
-  if (argc > 20)
-    from_pr    = atoi(argv[20]);
-  if (argc > 21)
-    st_wave    = atoi(argv[21]);
-  if (argc > 22)
-    MY_RAND    = atoi(argv[22]);
-  if (argc > 23)
-    N_mod      = atoi(argv[23]);
+    from_pr    = atoi(argv[19]);
   
-  if (argc < 24) {
+  if (argc < 20) {
 
-    fprintf(ferr, "Lack of command line arguments. Check! Need %d more arguments\n", 24-argc);
+    fprintf(ferr, "Lack of command line arguments. Check! Need %d more arguments\n", 20-argc);
     return 1;
 
   }
@@ -207,13 +214,9 @@ int main(int argc, char *argv[]) {
   fprintf(stderr, " do_eta_loc = %d\n ", do_eta_loc), fflush (stderr);
   fprintf(stderr, " do_profile = %d\n ", do_profile), fflush (stderr);
   fprintf(stderr, " do_fields  = %d\n ", do_fields), fflush (stderr);
-  fprintf(stderr, " do_slices  = %d\n ", do_slices), fflush (stderr);
   fprintf(stderr, " do_tagging = %d\n ", do_tagging), fflush (stderr);
   fprintf(stderr, " Printing resolution = %d\n ", prt_res), fflush (stderr);
   fprintf(stderr, " Restart from precursor = %d\n ", from_pr), fflush (stderr);
-  fprintf(stderr, " st_wave = %d\n ", st_wave), fflush (stderr);
-  fprintf(stderr, " MY_RAND = %d\n ", MY_RAND), fflush (stderr);
-  fprintf(stderr, " N_mod = %d\n ", N_mod), fflush (stderr);
   fprintf(stderr, "************************\n"), fflush (stderr);
 
   /**
@@ -241,7 +244,7 @@ int main(int argc, char *argv[]) {
      Here we set the densities and viscosities corresponding to the
      parameters above. Note that these variables are defined in two-phase.h already. 
      To set the dimensional parameters we can use three strategies:
-       1. $u_\ast$ to a fixed value and we modify $c$. This strategy allows to keep the same $Re_\ast$ and (1a) modify either the wave Reynolds number and keep fixed the viscosity ratio or (1b) modify the viscosity ratio and keep fixed the wave Reynolds number (strategy of Wu, Popinet and Deike, JFM2022);
+       1. $u_\ast$ to a fixed value and we modify $c$. This strategy allows to keep the same $Re_\ast$ and (1a) modify either the wave Reynolds number and keep fixed the viscosity ratio or (2a) modify the viscosity ratio and keep fixed the wave Reynolds number (strategy of Wu, Popinet and Deike, JFM2022);
        2. $c$ to a fixed value and we modify $u_\ast$. This strategy allows to keep the same viscosity ratio and wave Reynolds number, but we change $Re_\ast$.
      */
 
@@ -339,39 +342,6 @@ double u_y (double x, double y) {
 
 }
 
-/**
-   Set profile either with a third-order Stokes wave (set_profile function)
-   or wave spectrum (import_profile function). */
-
-void set_profile (scalar f) {
-  vertex scalar phi[];
-  foreach_vertex() {
-    phi[] = -(y-WaveProfile(x,z));
-  }
-  fractions (phi,f);
-  delete ({phi});
-  stats stat1 = statsf(f); // log some stats
-  fprintf (stderr, "f_min, f_sum and f_max, %8E %8E %8E \n",
-                   stat1.min, stat1.sum, stat1.max), fflush (stderr);
-}
-
-#include "sandbox/spectrum.h" // Used for new input method (the spectrum info)
-void import_profile (int N_mod, scalar f) {
-  power_input(N_mod);
-  dkx_ = kx_[1] - kx_[0];
-  dky_ = ky_[1] - ky_[0];
-  fprintf (stderr, "dkx = %g, dky = %g\n", dkx_, dky_), fflush (stderr);
-  vertex scalar phi[];
-  foreach_vertex() {
-    phi[] = -(y-(wave(x,z,N_mod)+h_));
-  }
-  fractions (phi,f);
-  delete ({phi});
-  stats stat1 = statsf(f); // log some stats
-  fprintf (stderr, "f_min, f_sum and f_max, %8E %8E %8E \n",
-                   stat1.min, stat1.sum, stat1.max), fflush (stderr);
-}
-
 /** 
    Initial event */
 
@@ -401,13 +371,12 @@ event init (i = 0) {
   fprintf(stderr, " do_eta_loc = %d\n ", do_eta_loc), fflush (stderr);
   fprintf(stderr, " do_profile = %d\n ", do_profile), fflush (stderr);
   fprintf(stderr, " do_fields  = %d\n ", do_fields), fflush (stderr);
-  fprintf(stderr, " do_slices  = %d\n ", do_slices), fflush (stderr);
   fprintf(stderr, " do_tagging = %d\n ", do_tagging), fflush (stderr);
   fprintf(stderr, " gravity = %.10e\n ", g_), fflush (stderr);
   fprintf(stderr, " RHO_RATIO = %.10e\n ", (rho1/rho2)), fflush (stderr);
   fprintf(stderr, " MU_RATIO  = %.10e\n ", (mu1/mu2)), fflush (stderr);
-  fprintf(stderr, " Surface tension = %.10e\n ", f.sigma), fflush (stderr);
-  fprintf(stderr, " Friction velocity = %.10e\n ", Ustar), fflush (stderr);
+  fprintf(stderr, " Surface tension  = %.10e\n ", f.sigma), fflush (stderr);
+  fprintf(stderr, " Friction velocity  = %.10e\n ", Ustar), fflush (stderr);
   fprintf(stderr, " T0 = %.10e\n ", T0_), fflush (stderr);
 
   fprintf(stderr, " We_w = %.10e\n ", rho1*sq(c_)*(2.0*pi/k_)/f.sigma ), fflush (stderr);
@@ -417,9 +386,6 @@ event init (i = 0) {
 
   fprintf(stderr, " Printing resolution = %d\n ", prt_res), fflush (stderr);
   fprintf(stderr, " Restart from precursor = %d\n ", from_pr), fflush (stderr);
-  fprintf(stderr, " st_wave = %d\n ", st_wave), fflush (stderr);
-  fprintf(stderr, " MY_RAND = %d\n ", MY_RAND), fflush (stderr);
-  fprintf(stderr, " N_mod = %d\n ", N_mod), fflush (stderr);
   fprintf(stderr, "************************\n"), fflush (stderr);
 
   /**
@@ -467,19 +433,8 @@ event init (i = 0) {
     delete ({cs}); // deleted since we use f[] from now on
     fprintf(stderr, "Simulation restarts from a dumped file (SINGLE-PHASE)\n"), fflush (stderr);
 
-    // Initalize the VoF profile
-    if(st_wave == 1) {
-      fprintf(stderr, "We use a 3rd-order Stokes wave!\n"), fflush (stderr);
-      set_profile (f);
-    }
-    else {
-      fprintf(stderr, "We import a profile previously generated!\n"), fflush (stderr);
-      allocate_arrays (N_mod);
-      import_profile (N_mod,f);
-      free_arrays ();
-    }
-    
-    // Initialize the density
+    // Initalize the VoF profile with density
+    fraction (f, WaveProfile(x,z)-y); // we initialize the profile and update the density
     foreach() {
       rhov[] = cm[]*rho(sf[]); 
     }
@@ -511,7 +466,7 @@ event init (i = 0) {
       u_x[]  = u.x[]/Ustar;
       omgz[] = omg.z[]/(2.0*pi/T0_);
     }
-    boundary({u_x,omgz}); // this should not be necessary, but it seems needed (maybe a bug?)
+    boundary({u_x,omgz});
     
     // Output an image for checking 
     char stg[80];
@@ -537,21 +492,12 @@ event init (i = 0) {
 
   }
   else {
-    p.nodump = false;
-    foreach() { // for same reasons, the code crashes after 3 ts when I load p (so set to 0)
-      p[] = 0;
-    }
-    scalar * list_s = {f,p,u.x,u.y,u.z,g.x,g.y,g.z,rhov};
-    if (restore ("restart.bin", list_s)) {
+    if (restore ("restart.bin")) {
       fprintf(stderr, "Simulation restarts from a dumped file (TWO-PHASE)\n"), fflush (stderr);
     }
     else {
       fprintf(stderr, "Restarting file for two-phase simulation is absent! Please provide it!\n"), fflush (stderr);
       return 1;
-    }
-    p.nodump = true;
-    foreach() { // for same reasons, the code crashes after 3 ts when I load p (so set to 0)
-      p[] = 0;
     }
   }
    
@@ -619,16 +565,7 @@ event log_simulation (i += 10) {
   
 event set_wave(i=0; i++; t<RELEASETIME) {
 
-  if(st_wave == 1) {
-    fprintf(stderr, "We use a 3rd-order Stokes wave!\n"), fflush (stderr);
-    set_profile (f);
-  }
-  else {
-    fprintf(stderr, "We import a profile previously generated!\n"), fflush (stderr);
-    allocate_arrays (N_mod);
-    import_profile (N_mod,f);
-    free_arrays ();
-  }
+  fraction (f, WaveProfile(x,z)-y);
   foreach() {
     foreach_dimension() {
       u.x[] = (1.0 - f[])*u.x[];
@@ -642,24 +579,11 @@ event set_wave(i=0; i++; t<RELEASETIME) {
 
 event start(t = RELEASETIME) {
   
-  if(st_wave == 1) {
-    fprintf(stderr, "We initialize the liquid velocity with u_x_st and u_y_st\n"), fflush (stderr);
-    set_profile (f);
-    foreach () {
-      u.x[] += u_x(x, y-h_)*f[]; // stokes wave profile
-      u.y[] += u_y(x, y-h_)*f[]; // stokes wave profile
-    }
-  }
-  else {
-    fprintf(stderr, "We initialize the liquid velocity with uin_x, uin_y and uin_z!\n"), fflush (stderr);
-    allocate_arrays (N_mod);
-    import_profile (N_mod,f);
-    foreach () {
-      u.x[] += uin_x(x, z, y-h_, N_mod)*f[]; // x --> streamwise (note that in spectrum.h z is vertical, y is spanwise)
-      u.y[] += uin_z(x, z, y-h_, N_mod)*f[]; // y --> vertical (note that in spectrum.h z is vertical, y is spanwise)
-      u.z[] += uin_y(x, z, y-h_, N_mod)*f[]; // z --> spanwise (note that in spectrum.h z is vertical, y is spanwise)
-    }
-    free_arrays ();
+  fprintf(stderr, "t = RELEASETIME, we initialize the liquid velocity\n"), fflush (stderr);
+  fraction (f, WaveProfile(x,z)-y);
+  foreach () {
+    u.x[] += u_x(x, y-h_)*f[];
+    u.y[] += u_y(x, y-h_)*f[];
   }
 
 }
@@ -716,6 +640,7 @@ event cmpt_f_shifted (t = RELEASETIME; t <= T0_*end_sim; t += T0_/tout_glo_my) {
   }
   p_hd.nodump = true; // we need to put here
   foreach() { 
+    ///*
     if(interfacial(point,f)) {
       p_hd[] += rhov[]*phi_1[];
     }
@@ -725,9 +650,53 @@ event cmpt_f_shifted (t = RELEASETIME; t <= T0_*end_sim; t += T0_/tout_glo_my) {
         p_hd[] += rhov[]*G.x*o.x;
       }
     }
+    //*/
   }
 
   /*
+  int int_pt1 = 0;
+  foreach(reduction(+:int_pt1)) { 
+    if (interfacial (point, f)) {
+      //if (point.level == MAXLEVEL) {
+        coord n = interface_normal(point, f), pp;
+        double alpha1 = plane_alpha (f[], n);
+        plane_area_center(n, alpha1, &pp);
+        double xc = x + Delta*pp.x;
+        double yc = y + Delta*pp.y;
+        double zc = z + Delta*pp.z;
+	zc *= (dimension - 2);
+	Point point1 = locate (xc, yc, zc);
+	if (point1.level > 0) { // best case
+	  POINT_VARIABLES;
+	  int_pt1++;
+	}
+      //}
+    }
+  }
+
+  int int_pt2 = 0;
+  foreach(reduction(+:int_pt2)) { 
+    if (interfacial (point, f2s)) {
+      //if (point.level == MAXLEVEL) {
+        coord n = interface_normal(point, f2s), pp;
+        double alpha1 = plane_alpha (f2s[], n);
+        plane_area_center(n, alpha1, &pp);
+        double xc = x + Delta*pp.x;
+        double yc = y + Delta*pp.y;
+        double zc = z + Delta*pp.z;
+	zc *= (dimension - 2);
+	Point point1 = locate (xc, yc, zc);
+	if (point1.level > 0) { // best case
+	  POINT_VARIABLES;
+	  int_pt2++;
+	}
+      //}
+    }
+  }
+
+  fprintf(stderr, "# int pt in f[]=   %09d\n", int_pt1); fflush (stderr);
+  fprintf(stderr, "# int pt in f2s[]= %09d\n", int_pt2); fflush (stderr);
+
   // Output an image for checking 
   char stg[80];
   char file[99];
@@ -738,6 +707,7 @@ event cmpt_f_shifted (t = RELEASETIME; t <= T0_*end_sim; t += T0_/tout_glo_my) {
   box(false, lc = {1,1,1}, lw = 0.1);
   draw_vof ("f"  , color = "u.x");
   draw_vof ("f2s", color = "u.x");
+  draw_vof ("f1s", color = "u.x");
   sprintf (stg, "t = %0.3f", 2.0*pi*t/T0_);
   draw_string (stg, size = 30); 
   sprintf (file, "./3D_shift_%09d.ppm", i);
@@ -763,7 +733,7 @@ event movies (t = RELEASETIME; t <= T0_*end_sim; t += T0_/tout_mov_my) {
     u_x[]  = u.x[]/Ustar;
     omgz[] = omg.z[]/(2.0*pi/T0_);
   }
-  boundary({u_x,omgz}); // this should not be necessary, but it seems needed (maybe a bug?)
+  boundary({u_x,omgz});
 
   char stg[80];
  
@@ -806,106 +776,45 @@ event out_pro (t = RELEASETIME; t <= T0_*end_sim; t += T0_/tout_pro_my) {
 
     fprintf(stderr, "I output the vertical profiles file every t=%.10e\n", T0_/tout_pro_my);
 
-    // We compute the vertical absolute coordinate
+    // We compute the vertical coordinate
     vertex scalar phi_v1[];
     foreach_vertex() {
       phi_v1[] = y;
     }
 
-    // We compute the vertical wave-following coordinate
-    int imax = 1024;
-    double y0 = eta_m0; 
-    double delta_min = L0/(1 << grid->maxdepth);
-    scalar phic_v2[];
-    foreach() {
-      phic_v2[] = -(2.*f[] - 1.)*delta_min*0.75;
-    }
-    restriction({phic_v2});
-    phic_v2[top] = neumann(0.);
-    phic_v2[bottom] = neumann(0.);
-    
-    int nint = LS_reinit(phic_v2, it_max = imax);
-    fprintf(stderr, " # of time steps for LS = %d\n ", nint), fflush (stderr);
-    vertex scalar phi_v2[];
+    // We compute with the level-set
+    /*
+    //vertex scalar phi_v2[];
+    scalar phi_v2[];
+    int imax = 512;
+    vof_to_ls (f, phi_v2, imax);
     foreach_vertex() {
-      if ( (y-y0)>=-pi/k_ && (y-y0)<=2.*pi/k_ ) {
-        phi_v2[]  = y0;
-#if dimension == 2
-        phi_v2[] += ((phic_v2[] + phic_v2[-1] + phic_v2[0,-1] + phic_v2[-1,-1])/4.);
-#else
-        phi_v2[] += (
-          phic_v2[] + phic_v2[-1] + phic_v2[0,-1] + phic_v2[-1,-1] +
-          phic_v2[0,0,-1] + phic_v2[-1,0,-1] + phic_v2[0,-1,-1] + phic_v2[-1,-1,-1]
-        )/8.;
-#endif
-      }
-      else {
-        phi_v2[] = y;
-      }
+      phi_v2[] = fabs(y-1.0) > 0.2 ? y : -phi_v2[]; 
+      //phi_v2[] = phi_v2[]; 
     }
-    phi_v2[top] = neumann(0.);
-    phi_v2[bottom] = neumann(0.);
-
-    // We define the extrema of the vertical coordinates
-    scalar pos[];
-#if dimension > 2
-    coord G_e = {0.,1.,0.}, Z_e = {0.,0.,0.};
-#else
-    coord G_e = {0.,1.}, Z_e = {0.,0.};
-#endif
-    position (f, pos, G_e, Z_e);
-    double eta_max = min(statsf(pos).max, eta_m0+cirp_th/1.); // to avoid wild max eta 
-    fprintf(stderr, " eta_max = %8E\n ", eta_max), fflush (stderr);
-    double eta_min = max(statsf(pos).min, eta_m0-cirp_th/1.); // to avoid wild min eta
-    fprintf(stderr, " eta_min = %8E\n ", eta_min), fflush (stderr);
-
-    double eta_avg = 0., area = 0.;
-    foreach(reduction(+:area) reduction(+:eta_avg)) {
-      if(interfacial(point, f)) {
-	coord n      = interface_normal(point, f), pp;
-        double alpha = plane_alpha (f[], n);
-        double ar    = pow(Delta, dimension-1)*plane_area_center (n, alpha, &pp);
-        eta_avg += pos[]*ar;
-        area += ar;	
-      }
-    }
-    eta_avg /= area; 
-    eta_avg = min(eta_avg,eta_m0+cirp_th/2.); // to avoid wild avg eta 
-    fprintf(stderr, " eta_avg (chk 1) = %8E\n ", eta_avg), fflush (stderr);
-    eta_avg = max(eta_avg,eta_m0-cirp_th/2.); // to avoid wild avg eta 
-    fprintf(stderr, " eta_avg (chk 2) = %8E\n ", eta_avg), fflush (stderr);
-
-    double fthr = 1.e-4; // the only free parameter for the abs coordinate
+    */
+    
     char file[99];
 
-    sprintf (file, "./profiles/prof_wat_abs_%09d.out", i); // vertical absolute coordinate
-    profile_output (u, p, p_hd, f, phi_v1, +1, 0.+fthr, 1,
-		    eta_max, Y0, i, MAXLEVEL, file);
-    fflush (stderr);
-    sprintf (file, "./profiles/prof_air_abs_%09d.out", i); // vertical absolute coordinate
-    profile_output (u, p, p_hd, f, phi_v1, -1, 1.-fthr, 1,
-		    L0, eta_min, i, MAXLEVEL, file);
-    fflush (stderr);
-    sprintf (file, "./profiles/prof_wat_wfc_%09d.out", i); // vertical wave-following coordinate
-    profile_output (u, p, p_hd, f, phi_v2, +1, 0.+fthr, 0,
-        	    eta_avg, 0., i, MAXLEVEL, file);
-    fflush (stderr);
-    sprintf (file, "./profiles/prof_air_wfc_%09d.out", i); // vertical wave-following coordinate
-    profile_output (u, p, p_hd, f, phi_v2, -1, 1.-fthr, 0,
-        	    L0, eta_avg, i, MAXLEVEL, file);
+    sprintf (file, "./profiles/prof_%09d_v1.out", i); // only vertical coordinate
+    profile_output (u, p, p_hd, phi_v1, i, MAXLEVEL, file);
     fflush (stderr);
    
+    /* 
+    sprintf (file, "./profiles/prof_%09d_v2.out", i); // level-set
+    profile_output (u, p, p_hd, phi_v2, i, MAXLEVEL, file);
+    fflush (stderr);
+    */
+  
     if (pid() == 0) {
     
       char name_1[80];
       sprintf (name_1,"./profiles/log_pro.out");
       FILE * log_sim = fopen(name_1,"a");
-      fprintf (log_sim, "%.10e %.10e %.10e %.10e %.10e %.10e\n", 
-		         t, 1.0*i, t-RELEASETIME, eta_min, eta_avg, eta_max);
+      fprintf (log_sim, "%.10e %.10e %.10e\n", t, 1.0*i, t-RELEASETIME);
       fclose(log_sim);
     
     }
-
     //return 1;
 
   }
@@ -1015,7 +924,7 @@ event fields (t = RELEASETIME; t <= T0_*end_sim; t += T0_/tout_fld_my) {
 
 event slices (t = RELEASETIME; t <= T0_*end_sim; t += T0_/tout_cut_my) {
 
-  if (do_slices == 1) {
+  if (do_fields == 1) {
 
     fprintf(stderr, "I output the slices every t=%.10e\n", T0_/tout_cut_my), fflush (stderr);
 
@@ -1057,6 +966,27 @@ event slices (t = RELEASETIME; t <= T0_*end_sim; t += T0_/tout_cut_my) {
       diss[] = sqterm;
     }
 
+    /*
+    int len = 3;
+    for (int s = 0; s < len; s++) {
+      char filename[100];
+      double stp = -L0/4.0+s*L0/4.0;
+      sprintf (filename, "./slices/ux_2d_%03d_%09d.bin", s, i); // x-vel
+      sliceXY (filename, u.x, stp, res, do_linear, print_bin);
+      sprintf (filename, "./slices/uy_2d_%03d_%09d.bin", s, i); // y-vel
+      sliceXY (filename, u.y, stp, res, do_linear, print_bin);
+      sprintf (filename, "./slices/uz_2d_%03d_%09d.bin", s, i); // z-vel
+      sliceXY (filename, u.z, stp, res, do_linear, print_bin);
+      sprintf (filename, "./slices/fv_2d_%03d_%09d.bin", s, i); // VoF
+      sliceXY (filename, f  , stp, res, do_linear, print_bin);
+      sprintf (filename, "./slices/uv_2d_%03d_%09d.bin", s, i); // uv
+      sliceXY (filename, uv , stp, res, do_linear, print_bin);
+      sprintf (filename, "./slices/om_2d_%03d_%09d.bin", s, i); // vorticity
+      sliceXY (filename, omega, stp, res, do_linear, print_bin);
+    }
+    */
+
+    ///*
     char * nfile[] = {"ux","uy","uz","fv","uv","ox","oy","oz","di"}; // keep two letters
     scalar * list_s = {u.x,u.y,u.z,f,uv,omg.x,omg.y,omg.z,diss}; 
     if ((int)list_len(list_s) != (int)sizeof(nfile)/sizeof(nfile[0])) {
@@ -1068,6 +998,7 @@ event slices (t = RELEASETIME; t <= T0_*end_sim; t += T0_/tout_cut_my) {
       double stp = -L0/4.0+s*L0/4.0;
       sliceXY_ls(nfile, list_s, stp, res, do_linear, print_bin, s, i);
     }
+    //*/
 
     if (pid() == 0) {
     
@@ -1441,14 +1372,14 @@ event global_obs (t = RELEASETIME; t <= T0_*end_sim; t += T0_/tout_glo_my) {
   double stp_pos_0 = 0.0; // it corresponds to 0*Delta 
   fprintf(stderr, "stp_eta0 for gl. obs. = %.10e\n", stp_pos_0);
   sprintf (name_0, "./budgets/global_obs_ptot_0.out");
-  output_global_obs_1 (name_0, i, MAXLEVEL, t, RELEASETIME, eta_m0, cirp_th, k_, g_, h_,
+  output_global_obs_1 (name_0, i, MAXLEVEL, t, RELEASETIME, eta_m0, cirp_th, k_,
 		       f2 , p, stp_eta_0, stp_pos_0);
 
   coord stp_eta_1 = {0.,0.,0.}; // it corresponds to 0*Delta 
   double stp_pos_1 = my_stp_eta_f2s; // it corresponds to 4*Delta 
   fprintf(stderr, "stp_eta1 for gl. obs. = %.10e\n", stp_pos_1);
   sprintf (name_0, "./budgets/global_obs_ptot_1.out");
-  output_global_obs_1 (name_0, i, MAXLEVEL, t, RELEASETIME, eta_m0, cirp_th, k_, g_, h_,
+  output_global_obs_1 (name_0, i, MAXLEVEL, t, RELEASETIME, eta_m0, cirp_th, k_, 
 		       f2s, p, stp_eta_1, stp_pos_1);
 
 }
@@ -1483,16 +1414,13 @@ event eta_loc (t = RELEASETIME; t <= T0_*end_sim; t += T0_/tout_eta_my) {
 
     fflush(stderr);
     char eta_out[100];
-    
-    coord stp_eta1 = {0.,0.,0.};
-    double stp_pos1 = my_stp_eta_f2s; // it corresponds to 4*Delta on 1024**3
-    sprintf (eta_out, "./eta/eta_loc/eta_loc_p1_t%09d.bin", i);
-    output_int_qtn (eta_out, i, MAXLEVEL, t, RELEASETIME, f2s, list_s, stp_eta1, stp_pos1, 1);
-    
-    coord stp_eta3 = {0.,0.,0.};
-    double stp_pos3 = 0.; // it corresponds to 4*Delta on 1024**3
-    sprintf (eta_out, "./eta/eta_loc/eta_loc_p3_t%09d.bin", i);
-    output_int_qtn (eta_out, i, MAXLEVEL, t, RELEASETIME, f  , list_s, stp_eta3, stp_pos3, 3);
+    sprintf (eta_out, "./eta/eta_loc/eta_loc_t%09d.bin", i);
+
+    ///*
+    coord stp_eta = {0.,0.,0.};
+    double stp_pos = my_stp_eta_f2s; // it corresponds to 4*Delta on 1024**3
+    output_int_qtn (eta_out, i, MAXLEVEL, t, RELEASETIME, f2s, list_s, stp_eta, stp_pos);
+    //*/
 
     /* 
     // To revert back and uncomment point.level == MAXLEVEL
@@ -1521,9 +1449,7 @@ event dumpstep (t = RELEASETIME; t <= T0_*end_sim; t += T0_/tout_res_my) {
 
   char dname[100];
   sprintf (dname, "dump_%d.bin", counter);
-  p.nodump = false; // we also dump the pressure (it might be useful)
   dump (dname);
-  p.nodump = true;
 
   /** 
      Add a symbolic link, log restarting info and size of the bin */
@@ -1559,9 +1485,7 @@ event dump_backup (t = RELEASETIME; t <= T0_*end_sim; t += T0_/tout_rbk_my) {
   
   char dname[100];
   sprintf (dname, "./restart_bk/dump_%09d.bin", i);
-  p.nodump = false; // we also dump the pressure (it might be useful)
   dump (dname);
-  p.nodump = true;
   
   /** 
      Log restarting info and size of the bin */
@@ -1625,4 +1549,6 @@ event adapt (i++) {
   }
 
 }
+#endif
+
 #endif
